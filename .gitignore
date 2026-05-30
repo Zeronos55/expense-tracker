@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.pyc
+
+# PyInstaller output
+build/
+dist/
+*.spec
+
+# App data (personal, not code)
+expenses.xlsx
+processed_files.txt
+receipts/
+
+# Tesseract (too large, installed separately)
+tesseract/
