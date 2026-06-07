@@ -31,7 +31,7 @@ pytesseract.pytesseract.tesseract_cmd = TESSERACT_PATH
 
 # ── CONFIG ──────────────────────────────────────────────
 EXCEL_FILE        = os.path.join(BASE_DIR, 'expenses.xlsx')
-RECEIPTS_DIR      = os.path.join(BASE_DIR, 'receipts')
+RECEIPTS_DIR      = r'C:\Users\User\iCloudDrive\ExpenseTracker\receipts'
 LOG_FILE          = os.path.join(BASE_DIR, 'processed_files.txt')
 SUPPORTED_FORMATS = ('.png', '.jpg', '.jpeg', '.bmp', '.tiff', '.webp')
 PRESET_CATEGORIES = ["Food & Dining", "Transport", "Shopping",

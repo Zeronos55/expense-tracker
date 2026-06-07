@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block content %}
+
+{% if message %}
+    {% set parts = message.split(':', 1) %}
+    <div class="msg-{{ parts[0] }}">{{ parts[1] }}</div>
+{% endif %}
+
+<div class="card">
+    <form method="post">
+        <label>Date</label>
+        <input type="text" name="date" placeholder="e.g. 21/05/2026" required>
+
+        <label>Recipient / Merchant</label>
+        <input type="text" name="recipient" placeholder="e.g. Starbucks" required>
+
+        <label>Amount (RM)</label>
+        <input type="number" name="amount" placeholder="e.g. 15.50"
+               step="0.01" min="0.01" required>
+
+        <label>Category</label>
+        <select name="category" id="catSelect"
+                onchange="document.getElementById('customRow').style.display=
+                          this.value=='custom'?'block':'none'">
+            {% for cat in categories %}
+            <option value="{{ cat }}">{{ cat }}</option>
+            {% endfor %}
+            <option value="custom">Custom...</option>
+        </select>
+
+        <div id="customRow" style="display:none;">
+            <label>Custom category name</label>
+            <input type="text" name="custom_category" placeholder="e.g. Birthday">
+        </div>
+
+        <button type="submit" class="btn btn-primary">Save Expense</button>
+    </form>
+</div>
+
+{% endblock %}

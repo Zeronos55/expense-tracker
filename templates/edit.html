@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block content %}
+
+{% if message %}
+    {% set parts = message.split(':', 1) %}
+    <div class="msg-{{ parts[0] }}">{{ parts[1] }}</div>
+{% endif %}
+
+<div class="card">
+    <p style="font-size:12px; color:#86868b; margin-bottom:16px;">
+        Source: {{ row.source }} · Added: {{ row.added_on }}
+    </p>
+
+    <form method="post">
+        <label>Date</label>
+        <input type="text" name="date" value="{{ row.date }}">
+
+        <label>Recipient</label>
+        <input type="text" name="recipient" value="{{ row.recipient }}">
+
+        <label>Amount (RM)</label>
+        <input type="number" name="amount" value="{{ row.amount }}"
+               step="0.01" min="0.01">
+
+        <label>Category</label>
+        <select name="category">
+            {% for cat in categories %}
+            <option value="{{ cat }}" {{ 'selected' if row.category == cat }}>
+                {{ cat }}
+            </option>
+            {% endfor %}
+            {% if row.category not in categories %}
+            <option value="{{ row.category }}" selected>{{ row.category }}</option>
+            {% endif %}
+        </select>
+
+        <button type="submit" name="action" value="save"
+                class="btn btn-primary">Save Changes</button>
+        <button type="submit" name="action" value="delete"
+                class="btn btn-danger"
+                onclick="return confirm('Delete this entry?')">Delete Entry</button>
+        <a href="/transactions" class="btn btn-ghost">Cancel</a>
+    </form>
+</div>
+
+{% endblock %}
