@@ -321,6 +321,37 @@ def process_run():
         "summary": f"Done. {saved} saved, {failed} failed."
     })
 
+@app.route("/upload-from-shortcut", methods=["POST"])
+def upload_from_shortcut():
+    try:
+        file = request.files.get("image")
+        if not file:
+            return jsonify({"status": "error", "message": "No image received"}), 400
+
+        img  = Image.open(file.stream)
+        text = pytesseract.image_to_string(img)
+
+        date, recipient, amount, category, source = parse_receipt(text)
+
+        db_insert(
+            date      or "Not found",
+            recipient or "Not found",
+            amount    or 0,
+            category, source,
+            file.filename or "shortcut_upload"
+        )
+
+        return jsonify({
+            "status":    "success",
+            "recipient": recipient,
+            "amount":    amount,
+            "date":      date,
+            "category":  category,
+        })
+
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
 @app.route("/edit/<int:row_id>", methods=["GET","POST"])
 def edit(row_id):
     rows = db_get_all()
