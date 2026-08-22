@@ -20,9 +20,17 @@ if getattr(sys, 'frozen', False):
 else:
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
+# Windows local path
 TESSERACT_PATH = os.path.join(BASE_DIR, 'tesseract', 'tesseract.exe')
+
+# Linux/Render path
+if not os.path.exists(TESSERACT_PATH):
+    TESSERACT_PATH = '/usr/bin/tesseract'
+
+# Fallback
 if not os.path.exists(TESSERACT_PATH):
     TESSERACT_PATH = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+
 pytesseract.pytesseract.tesseract_cmd = TESSERACT_PATH
 
 # ── CONFIG ───────────────────────────────────────────────

@@ -2,8 +2,8 @@ services:
   - type: web
     name: expense-tracker
     env: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: python app.py
+    buildCommand: apt-get install -y tesseract-ocr && pip install -r requirements.txt
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT
     envVars:
       - key: SUPABASE_URL
         sync: false
