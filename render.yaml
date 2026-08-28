@@ -9,3 +9,5 @@ services:
         sync: false
       - key: SUPABASE_KEY
         sync: false
+      - key: SHORTCUT_SECRET
+        sync: false

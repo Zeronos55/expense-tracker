@@ -3,7 +3,7 @@
 
 {% for year in years %}
 <div class="card">
-    <h2 style="font-size:16px; margin-bottom:12px; color:#86868b;">{{ year }}</h2>
+    <h2 style="font-size:13px; font-weight:700; text-transform:uppercase; letter-spacing:0.03em; color:var(--ink-muted); margin-bottom:14px;">{{ year }}</h2>
     {% set year_total = namespace(val=0) %}
     {% for month in summary[year]|sort(attribute=month_sort_key) %}
         {% set month_total = namespace(val=0) %}
@@ -13,18 +13,18 @@
         {% set year_total.val = year_total.val + month_total.val %}
         <div style="margin-bottom:16px;">
             <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
-                <span style="font-weight:600;">{{ month }}</span>
-                <span style="color:#86868b;">RM {{ "%.2f"|format(month_total.val) }}</span>
+                <span style="font-weight:600; font-size:14.5px;">{{ month }}</span>
+                <span style="color:var(--ink-muted); font-variant-numeric:tabular-nums; font-size:14.5px;">RM {{ "%.2f"|format(month_total.val) }}</span>
             </div>
             {% for cat, rows in summary[year][month].items()|sort %}
                 {% set cat_total = rows|sum(attribute='amount') %}
                 <a href="/transactions?month={{ month }}&category={{ cat }}"
-                   style="display:flex; justify-content:space-between; padding:8px 0;
-                          border-top:1px solid #f0f0f0; text-decoration:none; color:#1d1d1f;">
-                    <span style="font-size:14px;">{{ cat }}</span>
-                    <span style="font-size:14px; color:#0071e3;">
+                   style="display:flex; justify-content:space-between; padding:9px 0;
+                          border-top:1px solid var(--border); text-decoration:none; color:var(--ink);">
+                    <span style="font-size:14px; color:var(--ink-2);">{{ cat }}</span>
+                    <span style="font-size:14px; color:var(--accent); font-variant-numeric:tabular-nums;">
                         RM {{ "%.2f"|format(cat_total) }}
-                        <span style="color:#86868b; font-size:12px;">
+                        <span style="color:var(--ink-muted); font-size:12px;">
                             ({{ rows|length }})
                         </span>
                     </span>
@@ -32,18 +32,18 @@
             {% endfor %}
         </div>
     {% endfor %}
-    <div style="border-top:2px solid #f0f0f0; padding-top:10px;
-                display:flex; justify-content:space-between; font-weight:700;">
+    <div style="border-top:1px solid var(--border); padding-top:12px;
+                display:flex; justify-content:space-between; font-weight:700; font-size:15px;">
         <span>Total {{ year }}</span>
-        <span>RM {{ "%.2f"|format(year_total.val) }}</span>
+        <span style="font-variant-numeric:tabular-nums;">RM {{ "%.2f"|format(year_total.val) }}</span>
     </div>
 </div>
 {% endfor %}
 
 {% if not years %}
-<div class="card" style="text-align:center; padding:40px 16px;">
+<div class="card" style="text-align:center; padding:44px 16px;">
     <p style="font-size:32px; margin-bottom:12px;">📭</p>
-    <p style="color:#86868b;">No expenses yet.<br>Add one or process a receipt!</p>
+    <p style="color:var(--ink-muted); font-size:14.5px;">No expenses yet.<br>Add one or process a receipt!</p>
 </div>
 {% endif %}
 

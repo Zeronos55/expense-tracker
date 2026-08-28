@@ -199,12 +199,12 @@ def db_get_all():
     res = supabase.table("expenses").select("*").order("added_on", desc=True).execute()
     return res.data or []
 
-def db_insert(date, recipient, amount, category, source, file_label):
+def db_insert(date, recipient, amount, category, source, file_label, details=None):
     supabase.table("expenses").insert({
         "date": date, "recipient": recipient,
         "amount": round(float(amount), 2),
         "category": category, "source": source,
-        "file": file_label,
+        "file": file_label, "details": details or None,
         "added_on": datetime.now().strftime("%Y-%m-%d %H:%M")
     }).execute()
 
@@ -213,6 +213,34 @@ def db_update(row_id, field, value):
 
 def db_delete(row_id):
     supabase.table("expenses").delete().eq("id", row_id).execute()
+
+def build_chart_data(summary):
+    years = sorted(summary.keys(), reverse=True)
+    monthly, category, annual = {}, {}, []
+
+    for year in years:
+        months = sorted(summary[year].keys(), key=month_sort_key)
+        month_points = []
+        cat_totals = defaultdict(float)
+        year_total = 0.0
+
+        for month in months:
+            month_total = 0.0
+            for cat, rows in summary[year][month].items():
+                amt = sum(r["amount"] for r in rows)
+                month_total += amt
+                cat_totals[cat] += amt
+            month_points.append({"label": month, "total": round(month_total, 2)})
+            year_total += month_total
+
+        monthly[year]  = month_points
+        category[year] = [{"label": c, "total": round(t, 2)}
+                           for c, t in sorted(cat_totals.items(),
+                                               key=lambda kv: kv[1], reverse=True)]
+        annual.append({"label": year, "total": round(year_total, 2)})
+
+    return {"years": years, "monthly": monthly, "category": category,
+            "annual": list(reversed(annual))}
 
 def build_summary(rows):
     data = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
@@ -241,6 +269,13 @@ def index():
                            years=years,
                            month_sort_key=month_sort_key)
 
+@app.route("/charts")
+def charts():
+    rows    = db_get_all()
+    summary = build_summary(rows)
+    data    = build_chart_data(summary)
+    return render_template("charts.html", chart_data=data)
+
 @app.route("/transactions")
 def transactions():
     rows     = db_get_all()
@@ -268,6 +303,8 @@ def add():
         amount    = request.form.get("amount","").strip()
         category  = request.form.get("category","").strip()
         custom    = request.form.get("custom_category","").strip()
+        source    = request.form.get("source","").strip() or "MANUAL"
+        details   = request.form.get("details","").strip()
         if category == "custom" and custom:
             category = custom
         if not date or not recipient or not amount:
@@ -275,7 +312,7 @@ def add():
         else:
             try:
                 db_insert(date, recipient, float(amount),
-                          category, "MANUAL", "manual_entry")
+                          category, source, "manual_entry", details)
                 message = "success:Expense saved successfully!"
             except Exception as e:
                 message = f"error:Failed to save: {e}"
@@ -329,24 +366,38 @@ def process_run():
         "summary": f"Done. {saved} saved, {failed} failed."
     })
 
+SHORTCUT_SECRET = os.environ.get("SHORTCUT_SECRET")
+
 @app.route("/upload-from-shortcut", methods=["POST"])
 def upload_from_shortcut():
-    try:
-        file = request.files.get("image")
-        if not file:
-            return jsonify({"status": "error", "message": "No image received"}), 400
+    if SHORTCUT_SECRET:
+        supplied = request.headers.get("X-Shortcut-Secret") or request.form.get("secret")
+        if supplied != SHORTCUT_SECRET:
+            return jsonify({"status": "error", "message": "Unauthorized"}), 401
 
-        img  = Image.open(file.stream)
-        text = pytesseract.image_to_string(img)
+    try:
+        # Two ways to reach this endpoint:
+        #   1. "text"  — already OCR'd on-device by the Shortcut (preferred, no server OCR)
+        #   2. "image" — raw screenshot; server runs pytesseract on it (fallback)
+        text        = request.form.get("text", "").strip()
+        file        = request.files.get("image")
+        file_label  = "shortcut_text_upload"
+
+        if not text and file:
+            img        = Image.open(file.stream)
+            text       = pytesseract.image_to_string(img)
+            file_label = file.filename or "shortcut_image_upload"
+        elif not text and not file:
+            return jsonify({"status": "error", "message": "No image or text received"}), 400
 
         date, recipient, amount, category, source = parse_receipt(text)
+        details = request.form.get("details", "").strip()
 
         db_insert(
             date      or "Not found",
             recipient or "Not found",
             amount    or 0,
-            category, source,
-            file.filename or "shortcut_upload"
+            category, source, file_label, details
         )
 
         return jsonify({
@@ -355,6 +406,7 @@ def upload_from_shortcut():
             "amount":    amount,
             "date":      date,
             "category":  category,
+            "source":    source,
         })
 
     except Exception as e:
@@ -372,14 +424,14 @@ def edit(row_id):
         if action == "delete":
             db_delete(row_id)
             return redirect(url_for("transactions"))
-        fields = ["date","recipient","amount","category"]
+        fields = ["date","recipient","amount","category","source","details"]
         for field in fields:
             val = request.form.get(field,"").strip()
-            if val:
+            if val or field == "details":
                 if field == "amount":
                     try: val = round(float(val), 2)
                     except: continue
-                db_update(row_id, field, val)
+                db_update(row_id, field, val or None)
         message = "success:Entry updated."
         rows = db_get_all()
         row  = next((r for r in rows if r["id"] == row_id), None)

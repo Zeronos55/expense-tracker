@@ -1,0 +1,195 @@
+{% extends "base.html" %}
+{% block content %}
+
+{% if not chart_data.years %}
+<div class="card" style="text-align:center; padding:44px 16px;">
+    <p style="font-size:32px; margin-bottom:12px;">📈</p>
+    <p style="color:var(--ink-muted); font-size:14.5px;">No data to chart yet.<br>Add an expense first.</p>
+</div>
+{% else %}
+
+<div class="card" style="padding:16px;">
+    <div style="display:flex; align-items:flex-end; justify-content:space-between; gap:14px;">
+        <div>
+            <label style="margin-bottom:6px;">Year</label>
+            <select id="yearSelect" style="margin:0; width:auto; min-width:110px;">
+                {% for y in chart_data.years %}
+                <option value="{{ y }}">{{ y }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div style="text-align:right;">
+            <p style="font-size:12.5px; font-weight:600; color:var(--ink-muted); text-transform:uppercase; letter-spacing:0.02em;">Total</p>
+            <p id="yearTotal" style="font-size:22px; font-weight:700; font-variant-numeric:tabular-nums;">RM 0.00</p>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <p style="font-size:13px; font-weight:700; color:var(--ink-2); margin-bottom:14px;">Monthly spend</p>
+    <div style="position:relative; height:200px;"><canvas id="monthlyChart"></canvas></div>
+    <details style="margin-top:10px;">
+        <summary style="font-size:12.5px; color:var(--ink-muted); cursor:pointer;">View as table</summary>
+        <table id="monthlyTable" style="width:100%; border-collapse:collapse; margin-top:10px; font-size:13px;"></table>
+    </details>
+</div>
+
+<div class="card">
+    <p style="font-size:13px; font-weight:700; color:var(--ink-2); margin-bottom:14px;">By category</p>
+    <div style="position:relative;"><canvas id="categoryChart"></canvas></div>
+    <details style="margin-top:10px;">
+        <summary style="font-size:12.5px; color:var(--ink-muted); cursor:pointer;">View as table</summary>
+        <table id="categoryTable" style="width:100%; border-collapse:collapse; margin-top:10px; font-size:13px;"></table>
+    </details>
+</div>
+
+<div class="card">
+    <p style="font-size:13px; font-weight:700; color:var(--ink-2); margin-bottom:14px;">Annual totals</p>
+    <div style="position:relative; height:{{ (chart_data.years|length * 34 + 30) }}px;"><canvas id="annualChart"></canvas></div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+<script>
+const CHART_DATA = {{ chart_data | tojson }};
+
+const HUES_LIGHT = ['#2a78d6','#eb6834','#1baf7a','#eda100','#e87ba4','#008300','#4a3aa7','#e34948'];
+const HUES_DARK  = ['#3987e5','#d95926','#199e70','#c98500','#d55181','#008300','#9085e9','#e66767'];
+
+function isDark() { return window.matchMedia('(prefers-color-scheme: dark)').matches; }
+function hues() { return isDark() ? HUES_DARK : HUES_LIGHT; }
+function ink()       { return isDark() ? '#c3c2b7' : '#52514e'; }
+function inkMuted()  { return '#898781'; }
+function gridline()  { return isDark() ? '#2c2c2a' : '#e1e0d9'; }
+function surface()   { return isDark() ? '#1a1a19' : '#fcfcfb'; }
+function accent()    { return isDark() ? '#3987e5' : '#2a78d6'; }
+function fmt(n)      { return 'RM ' + n.toFixed(2); }
+
+function categoryColors(n) {
+    const h = hues();
+    if (n <= 8) return h.slice(0, n);
+    return h.slice(0, 7).concat([inkMuted()]);
+}
+
+Chart.defaults.font.family = "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+Chart.defaults.font.size = 12;
+
+let monthlyChart, categoryChart, annualChart;
+
+function tooltipBase() {
+    return {
+        backgroundColor: surface(),
+        titleColor: isDark() ? '#ffffff' : '#0b0b0b',
+        bodyColor: ink(),
+        borderColor: gridline(),
+        borderWidth: 1,
+        padding: 10,
+        cornerRadius: 8,
+        displayColors: false,
+        callbacks: { label: (ctx) => fmt(ctx.parsed.y ?? ctx.parsed.x) }
+    };
+}
+
+function renderMonthly(year) {
+    const points = CHART_DATA.monthly[year] || [];
+    const labels = points.map(p => p.label.split(' ')[0]);
+    const totals = points.map(p => p.total);
+
+    const cfg = {
+        type: 'bar',
+        data: { labels, datasets: [{ data: totals, backgroundColor: accent(),
+                 borderRadius: 4, maxBarThickness: 28 }] },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { display: false }, tooltip: tooltipBase() },
+            scales: {
+                x: { grid: { display: false }, ticks: { color: inkMuted() } },
+                y: { beginAtZero: true, grid: { color: gridline() },
+                     ticks: { color: inkMuted(), callback: v => 'RM ' + v } }
+            }
+        }
+    };
+    if (monthlyChart) monthlyChart.destroy();
+    monthlyChart = new Chart(document.getElementById('monthlyChart'), cfg);
+
+    const table = document.getElementById('monthlyTable');
+    table.innerHTML = '<tr style="text-align:left;"><th style="padding:6px 0; border-bottom:1px solid var(--border);">Month</th>' +
+        '<th style="padding:6px 0; border-bottom:1px solid var(--border); text-align:right;">Total</th></tr>' +
+        points.map(p => `<tr><td style="padding:5px 0; border-bottom:1px solid var(--border); color:var(--ink-2);">${p.label}</td>` +
+            `<td style="padding:5px 0; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric:tabular-nums;">${fmt(p.total)}</td></tr>`).join('');
+}
+
+function renderCategory(year) {
+    const points = (CHART_DATA.category[year] || []).slice();
+    let display = points;
+    if (points.length > 8) {
+        const top = points.slice(0, 7);
+        const other = points.slice(7).reduce((s, p) => s + p.total, 0);
+        display = top.concat([{ label: 'Other', total: other }]);
+    }
+    const colors = categoryColors(display.length);
+    const labels = display.map(p => p.label);
+    const totals = display.map(p => p.total);
+
+    const cfg = {
+        type: 'bar',
+        data: { labels, datasets: [{ data: totals, backgroundColor: colors,
+                 borderRadius: 4, maxBarThickness: 24 }] },
+        options: {
+            indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { display: false }, tooltip: tooltipBase() },
+            scales: {
+                x: { beginAtZero: true, grid: { color: gridline() }, ticks: { color: inkMuted(), callback: v => 'RM ' + v } },
+                y: { grid: { display: false }, ticks: { color: ink() } }
+            }
+        }
+    };
+    document.getElementById('categoryChart').parentElement.style.height = Math.max(120, display.length * 34 + 20) + 'px';
+    if (categoryChart) categoryChart.destroy();
+    categoryChart = new Chart(document.getElementById('categoryChart'), cfg);
+
+    const table = document.getElementById('categoryTable');
+    table.innerHTML = '<tr style="text-align:left;"><th style="padding:6px 0; border-bottom:1px solid var(--border);">Category</th>' +
+        '<th style="padding:6px 0; border-bottom:1px solid var(--border); text-align:right;">Total</th></tr>' +
+        display.map(p => `<tr><td style="padding:5px 0; border-bottom:1px solid var(--border); color:var(--ink-2);">${p.label}</td>` +
+            `<td style="padding:5px 0; border-bottom:1px solid var(--border); text-align:right; font-variant-numeric:tabular-nums;">${fmt(p.total)}</td></tr>`).join('');
+}
+
+function renderAnnual() {
+    const labels = CHART_DATA.annual.map(p => p.label);
+    const totals = CHART_DATA.annual.map(p => p.total);
+    const cfg = {
+        type: 'bar',
+        data: { labels, datasets: [{ data: totals, backgroundColor: accent(), borderRadius: 4, maxBarThickness: 24 }] },
+        options: {
+            indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { display: false }, tooltip: tooltipBase() },
+            scales: {
+                x: { beginAtZero: true, grid: { color: gridline() }, ticks: { color: inkMuted(), callback: v => 'RM ' + v } },
+                y: { grid: { display: false }, ticks: { color: ink() } }
+            }
+        }
+    };
+    if (annualChart) annualChart.destroy();
+    annualChart = new Chart(document.getElementById('annualChart'), cfg);
+}
+
+function renderAll(year) {
+    document.getElementById('yearTotal').textContent =
+        fmt((CHART_DATA.annual.find(p => p.label === year) || { total: 0 }).total);
+    renderMonthly(year);
+    renderCategory(year);
+}
+
+const yearSelect = document.getElementById('yearSelect');
+yearSelect.addEventListener('change', () => renderAll(yearSelect.value));
+renderAll(CHART_DATA.years[0]);
+renderAnnual();
+
+window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+    renderAll(yearSelect.value);
+    renderAnnual();
+});
+</script>
+
+{% endif %}
+{% endblock %}

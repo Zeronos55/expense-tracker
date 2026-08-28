@@ -4,7 +4,7 @@
 <div class="card" style="text-align:center; padding:30px 16px;">
     <p style="font-size:48px; margin-bottom:12px;">📷</p>
     <p style="font-weight:600; font-size:16px; margin-bottom:8px;">Process Receipts</p>
-    <p style="color:#86868b; font-size:14px; margin-bottom:24px;">
+    <p style="color:var(--ink-muted); font-size:14px; margin-bottom:24px;">
         Scans your iCloud receipts folder and saves any new images automatically.
     </p>
     <button class="btn btn-primary" onclick="runProcess()" id="runBtn">
@@ -33,12 +33,12 @@ function runProcess() {
             list.innerHTML = '';
             data.results.forEach(r => {
                 const div = document.createElement('div');
-                div.style = 'padding:8px 0; border-top:1px solid #f0f0f0; font-size:14px;';
+                div.style = 'padding:8px 0; border-top:1px solid var(--border); font-size:14px;';
                 if (r.status === 'saved') {
                     div.innerHTML = `<strong>${r.recipient}</strong> — RM ${r.amount}<br>
-                                     <span style="color:#86868b">${r.date} · ${r.category}</span>`;
+                                     <span style="color:var(--ink-muted)">${r.date} · ${r.category}</span>`;
                 } else {
-                    div.innerHTML = `<span style="color:#ff3b30">❌ ${r.file}: ${r.error}</span>`;
+                    div.innerHTML = `<span style="color:var(--critical)">❌ ${r.file}: ${r.error}</span>`;
                 }
                 list.appendChild(div);
             });
