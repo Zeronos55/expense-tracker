@@ -2,7 +2,7 @@ from flask import Flask, render_template, request, jsonify, redirect, url_for
 from supabase import create_client
 import pytesseract
 from PIL import Image
-import os, re, sys
+import os, re, sys, hmac
 from datetime import datetime
 from collections import defaultdict
 
@@ -13,6 +13,27 @@ import os
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://kzbwsaurpemryreqmwaa.supabase.co")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt6YndzYXVycGVtcnlyZXFtd2FhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA0OTM0MzgsImV4cCI6MjA5NjA2OTQzOH0.V-4sxaxcrplOArLeVj6rvw6N_F6CtKkfFy1kAEpjuuw")
 supabase     = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+# ── ACCESS CONTROL ───────────────────────────────────────
+# This is a personal app, not a public one — everything except the
+# Shortcut endpoint (which has its own secret, below) requires a login.
+APP_USERNAME = os.environ.get("APP_USERNAME")
+APP_PASSWORD = os.environ.get("APP_PASSWORD")
+
+@app.before_request
+def require_login():
+    if request.path == "/upload-from-shortcut":
+        return  # authenticated separately via SHORTCUT_SECRET
+    if not APP_USERNAME or not APP_PASSWORD:
+        return ("Server misconfigured: set APP_USERNAME and APP_PASSWORD "
+                "environment variables to use this app.", 500)
+    auth = request.authorization
+    valid = (auth
+             and hmac.compare_digest(auth.username or "", APP_USERNAME)
+             and hmac.compare_digest(auth.password or "", APP_PASSWORD))
+    if not valid:
+        return ("Login required.", 401,
+                {"WWW-Authenticate": 'Basic realm="Expense Tracker"'})
 
 # ── TESSERACT ────────────────────────────────────────────
 if getattr(sys, 'frozen', False):
@@ -370,10 +391,12 @@ SHORTCUT_SECRET = os.environ.get("SHORTCUT_SECRET")
 
 @app.route("/upload-from-shortcut", methods=["POST"])
 def upload_from_shortcut():
-    if SHORTCUT_SECRET:
-        supplied = request.headers.get("X-Shortcut-Secret") or request.form.get("secret")
-        if supplied != SHORTCUT_SECRET:
-            return jsonify({"status": "error", "message": "Unauthorized"}), 401
+    if not SHORTCUT_SECRET:
+        return jsonify({"status": "error",
+                         "message": "Server misconfigured: set SHORTCUT_SECRET"}), 500
+    supplied = request.headers.get("X-Shortcut-Secret") or request.form.get("secret")
+    if not hmac.compare_digest(supplied or "", SHORTCUT_SECRET):
+        return jsonify({"status": "error", "message": "Unauthorized"}), 401
 
     try:
         # Two ways to reach this endpoint:

@@ -1,7 +1,8 @@
 # Expense Tracker
 
-A small Flask app for tracking personal expenses from bank/e-wallet receipt
-screenshots. Data lives in Supabase; the app is deployed on Render.
+A small **personal** Flask app for tracking your own expenses from bank/e-wallet
+receipt screenshots. Data lives in Supabase; the app is deployed on Render.
+The whole app requires a login (see below) — it's not meant to be public.
 
 Each entry has: **date, recipient (name), amount (price), source (which
 banking app), category, and optional details.** View a monthly/annual
@@ -34,10 +35,20 @@ column used by the forms and the Shortcut endpoint.
 |---|---|---|
 | `SUPABASE_URL` | yes | Your Supabase project URL |
 | `SUPABASE_KEY` | yes | Your Supabase anon key |
-| `SHORTCUT_SECRET` | recommended | A password only your Shortcut knows. When set, `/upload-from-shortcut` rejects any request that doesn't include it. Without it, the endpoint is open to anyone who has the URL. |
+| `APP_USERNAME` | yes | Username for logging into the app in a browser |
+| `APP_PASSWORD` | yes | Password for logging into the app in a browser |
+| `SHORTCUT_SECRET` | yes | A separate password only your Shortcut knows, for `/upload-from-shortcut` |
 
-Pick any random string for `SHORTCUT_SECRET`, e.g. generate one with
+All four are now **required** — this app is personal, not public. Without
+`APP_USERNAME`/`APP_PASSWORD` set, every page refuses to load; without
+`SHORTCUT_SECRET`, the Shortcut endpoint refuses uploads. Pick any random
+string for `SHORTCUT_SECRET` and `APP_PASSWORD`, e.g. generate one with
 `python -c "import secrets; print(secrets.token_urlsafe(24))"`.
+
+Visiting the app in a browser will prompt for `APP_USERNAME`/`APP_PASSWORD`
+(standard HTTP Basic Auth — your browser remembers it after the first login).
+This is separate from `SHORTCUT_SECRET`, which only guards the upload
+endpoint the Shortcut calls.
 
 ## iOS Shortcut — upload a receipt screenshot
 
@@ -81,5 +92,8 @@ Tesseract installed (`render.yaml` already does this).
 pip install -r requirements.txt
 export SUPABASE_URL=...
 export SUPABASE_KEY=...
+export APP_USERNAME=...
+export APP_PASSWORD=...
+export SHORTCUT_SECRET=...
 python app.py
 ```
