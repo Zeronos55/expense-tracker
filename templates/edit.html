@@ -7,8 +7,8 @@
 {% endif %}
 
 <div class="card">
-    <p style="font-size:12px; color:#86868b; margin-bottom:16px;">
-        Source: {{ row.source }} · Added: {{ row.added_on }}
+    <p style="font-size:12px; color:var(--ink-muted); margin-bottom:16px;">
+        Added: {{ row.added_on }}
     </p>
 
     <form method="post">
@@ -33,6 +33,12 @@
             <option value="{{ row.category }}" selected>{{ row.category }}</option>
             {% endif %}
         </select>
+
+        <label>Banking app / source</label>
+        <input type="text" name="source" value="{{ row.source or '' }}" placeholder="e.g. Maybank, TNG, Cash">
+
+        <label>Details</label>
+        <textarea name="details" placeholder="Any extra notes about this expense">{{ row.details or '' }}</textarea>
 
         <button type="submit" name="action" value="save"
                 class="btn btn-primary">Save Changes</button>
