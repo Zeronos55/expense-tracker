@@ -18,7 +18,6 @@ summary, a chart view, and add, edit or delete any entry.
 | `/add` | Manual entry form |
 | `/edit/<id>` | Edit or delete a single entry |
 | `/upload-from-shortcut` | POST endpoint for the iOS Shortcut (see below) |
-| `/process`, `/process/run` | Scans a local folder for screenshots and OCRs them — only works when run on a machine with that folder (e.g. locally on Windows with iCloud Drive), not on Render |
 
 ## One-time setup
 
@@ -52,9 +51,8 @@ endpoint the Shortcut calls.
 
 ## iOS Shortcut — upload a receipt screenshot
 
-OCR runs **on-device** using Shortcuts' own "Extract Text from Image" action,
-so the app doesn't need to run Tesseract for shortcut uploads (it still can,
-as a fallback — see below).
+OCR runs **on-device** using Shortcuts' own "Extract Text from Image" action —
+the server only ever receives already-extracted text, never an image.
 
 1. Open the **Shortcuts** app → **+** to create a new shortcut.
 2. Add action **Extract Text from Image**. Leave "Input" as the shortcut's
@@ -65,7 +63,7 @@ as a fallback — see below).
    - Method: `POST`
    - Request Body: **Form**
      - Field `text`, value = the *Extracted Text* variable from step 2
-     - Field `secret`, value = your `SHORTCUT_SECRET` (skip if you didn't set one)
+     - Field `secret`, value = your `SHORTCUT_SECRET`
 4. (Optional) Add **Show Notification**, with the "Get Contents of URL" result
    as the text, so you get an instant confirmation of what was parsed.
 5. Rename the shortcut (e.g. "Log Receipt"), tap the settings icon, and turn
@@ -77,14 +75,6 @@ The endpoint responds with the parsed `date`, `recipient`, `amount`,
 `category` and `source` as JSON so step 4's notification can show them.
 Whatever comes out imperfect (OCR/parsing isn't always exact) can be fixed
 afterwards in the app under **History** → tap the entry → edit.
-
-### Fallback: server-side OCR
-
-`/upload-from-shortcut` also still accepts a raw `image` file field (instead
-of `text`) — in that case the server runs `pytesseract` on it, same as
-before. Useful if a device can't run "Extract Text from Image" (e.g. an
-Automation from a non-Apple source), but slower and depends on Render having
-Tesseract installed (`render.yaml` already does this).
 
 ## Local development
 

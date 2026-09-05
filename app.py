@@ -1,8 +1,6 @@
 from flask import Flask, render_template, request, jsonify, redirect, url_for
 from supabase import create_client
-import pytesseract
-from PIL import Image
-import os, re, sys, hmac
+import os, re, hmac
 from datetime import datetime
 from collections import defaultdict
 from urllib.parse import urlparse
@@ -36,29 +34,7 @@ def require_login():
         return ("Login required.", 401,
                 {"WWW-Authenticate": 'Basic realm="Expense Tracker"'})
 
-# ── TESSERACT ────────────────────────────────────────────
-if getattr(sys, 'frozen', False):
-    BASE_DIR = os.path.dirname(sys.executable)
-else:
-    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
-# Windows local path
-TESSERACT_PATH = os.path.join(BASE_DIR, 'tesseract', 'tesseract.exe')
-
-# Linux/Render path
-if not os.path.exists(TESSERACT_PATH):
-    TESSERACT_PATH = '/usr/bin/tesseract'
-
-# Fallback
-if not os.path.exists(TESSERACT_PATH):
-    TESSERACT_PATH = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
-
-pytesseract.pytesseract.tesseract_cmd = TESSERACT_PATH
-
 # ── CONFIG ───────────────────────────────────────────────
-RECEIPTS_DIR      = r'C:\Users\User\iCloudDrive\ExpenseTracker\receipts'
-LOG_FILE          = os.path.join(BASE_DIR, 'processed_files.txt')
-SUPPORTED_FORMATS = ('.png', '.jpg', '.jpeg', '.bmp', '.tiff', '.webp')
 PRESET_CATEGORIES = ["Food & Dining", "Transport", "Shopping",
                      "Entertainment", "Health & Fitness", "Utilities"]
 
@@ -242,16 +218,6 @@ def month_sort_key(label):
     try: return datetime.strptime(label, "%b %Y")
     except: return datetime.min
 
-def load_processed_files():
-    if not os.path.exists(LOG_FILE): return set()
-    with open(LOG_FILE, 'r') as f:
-        return set(line.strip() for line in f.readlines())
-
-def mark_as_processed(filename):
-    with open(LOG_FILE, 'a') as f:
-        f.write(filename + '\n')
-
-
 # ══════════════════════════════════════════════════════════
 # SUPABASE HELPERS
 # ══════════════════════════════════════════════════════════
@@ -381,53 +347,6 @@ def add():
                            categories=PRESET_CATEGORIES,
                            message=message)
 
-@app.route("/process")
-def process_page():
-    return render_template("process.html")
-
-@app.route("/process/run", methods=["POST"])
-def process_run():
-    if not os.path.exists(RECEIPTS_DIR):
-        return jsonify({"results": [], "summary": "Receipts folder not found."})
-
-    processed = load_processed_files()
-    all_files  = [f for f in os.listdir(RECEIPTS_DIR)
-                  if f.lower().endswith(SUPPORTED_FORMATS)]
-    new_files  = [f for f in all_files if f not in processed]
-
-    if not new_files:
-        return jsonify({"results": [],
-                        "summary": f"No new receipts found. ({len(all_files)} already processed)"})
-
-    known   = known_categories()
-    results = []
-    for filename in new_files:
-        full_path = os.path.join(RECEIPTS_DIR, filename)
-        try:
-            img  = Image.open(full_path)
-            text = pytesseract.image_to_string(img)
-            date, recipient, amount, category, source = parse_receipt(text, known)
-            db_insert(date or "Not found",
-                      recipient or "Not found",
-                      amount or 0,
-                      category, source, filename)
-            mark_as_processed(filename)
-            results.append({
-                "file": filename, "status": "saved",
-                "recipient": recipient, "amount": amount,
-                "date": date, "category": category,
-                "source": source
-            })
-        except Exception as e:
-            results.append({"file": filename, "status": "failed", "error": str(e)})
-
-    saved  = sum(1 for r in results if r["status"] == "saved")
-    failed = sum(1 for r in results if r["status"] == "failed")
-    return jsonify({
-        "results": results,
-        "summary": f"Done. {saved} saved, {failed} failed."
-    })
-
 SHORTCUT_SECRET = os.environ.get("SHORTCUT_SECRET")
 
 @app.route("/upload-from-shortcut", methods=["POST"])
@@ -440,19 +359,13 @@ def upload_from_shortcut():
         return jsonify({"status": "error", "message": "Unauthorized"}), 401
 
     try:
-        # Two ways to reach this endpoint:
-        #   1. "text"  — already OCR'd on-device by the Shortcut (preferred, no server OCR)
-        #   2. "image" — raw screenshot; server runs pytesseract on it (fallback)
-        text        = request.form.get("text", "").strip()
-        file        = request.files.get("image")
-        file_label  = "shortcut_text_upload"
+        # OCR runs on-device (Shortcuts' "Extract Text from Image"); this
+        # endpoint just parses the already-extracted text.
+        text       = request.form.get("text", "").strip()
+        file_label = "shortcut_text_upload"
 
-        if not text and file:
-            img        = Image.open(file.stream)
-            text       = pytesseract.image_to_string(img)
-            file_label = file.filename or "shortcut_image_upload"
-        elif not text and not file:
-            return jsonify({"status": "error", "message": "No image or text received"}), 400
+        if not text:
+            return jsonify({"status": "error", "message": "No text received"}), 400
 
         date, recipient, amount, category, source = parse_receipt(text, known_categories())
         details = request.form.get("details", "").strip()
