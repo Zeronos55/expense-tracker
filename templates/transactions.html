@@ -20,7 +20,8 @@
 
 {% if rows %}
     {% for row in rows %}
-    <a href="/edit/{{ row.id }}" style="text-decoration:none; color:var(--ink);">
+    <a href="/edit/{{ row.id }}" style="text-decoration:none; color:var(--ink);"
+       onclick="sessionStorage.setItem('txScrollY', window.scrollY)">
         <div class="card" style="padding:14px 16px;">
             <div style="display:flex; align-items:flex-start; gap:12px;">
                 <div style="font-size:22px; line-height:1.2; flex-shrink:0;" aria-hidden="true">{{ row.category | category_icon }}</div>
@@ -56,5 +57,15 @@
         <p style="color:var(--ink-muted); font-size:14.5px;">No transactions found.</p>
     </div>
 {% endif %}
+
+<script>
+(function() {
+    var y = sessionStorage.getItem('txScrollY');
+    if (y !== null) {
+        window.scrollTo(0, parseInt(y, 10));
+        sessionStorage.removeItem('txScrollY');
+    }
+})();
+</script>
 
 {% endblock %}

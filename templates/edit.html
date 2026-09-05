@@ -1,17 +1,13 @@
 {% extends "base.html" %}
 {% block content %}
 
-{% if message %}
-    {% set parts = message.split(':', 1) %}
-    <div class="msg-{{ parts[0] }}">{{ parts[1] }}</div>
-{% endif %}
-
 <div class="card">
     <p style="font-size:12px; color:var(--ink-muted); margin-bottom:16px;">
         Added: {{ row.added_on }}
     </p>
 
     <form method="post">
+        <input type="hidden" name="return_to" value="{{ return_to }}">
         <label>Date</label>
         <input type="text" name="date" value="{{ row.date }}">
 
@@ -45,7 +41,7 @@
         <button type="submit" name="action" value="delete"
                 class="btn btn-danger"
                 onclick="return confirm('Delete this entry?')">Delete Entry</button>
-        <a href="/transactions" class="btn btn-ghost">Cancel</a>
+        <a href="{{ return_to }}" class="btn btn-ghost">Cancel</a>
     </form>
 </div>
 
