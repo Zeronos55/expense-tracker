@@ -61,6 +61,32 @@ SUPPORTED_FORMATS = ('.png', '.jpg', '.jpeg', '.bmp', '.tiff', '.webp')
 PRESET_CATEGORIES = ["Food & Dining", "Transport", "Shopping",
                      "Entertainment", "Health & Fitness", "Utilities"]
 
+SOURCE_LABELS = {
+    "TNG": "Touch 'n Go", "SHOPEE": "ShopeePay",
+    "MAYBANK_CARD": "Maybank", "MAYBANK_TRANSFER": "Maybank",
+    "DUITNOW_GENERIC": "DuitNow QR", "CIMB": "CIMB", "RHB": "RHB",
+    "UNKNOWN": "Unknown", "MANUAL": "Manual entry",
+}
+
+CATEGORY_ICONS = {
+    "Food & Dining": "🍜", "Transport": "🚗", "Shopping": "🛍️",
+    "Entertainment": "🎬", "Health & Fitness": "💊", "Utilities": "💡",
+    "Uncategorized": "❔",
+}
+
+def source_label(value):
+    return SOURCE_LABELS.get(value, value)
+
+def category_icon(value):
+    return CATEGORY_ICONS.get(value, "🏷️")
+
+def display_name(value):
+    return value.title() if value and value.isupper() else value
+
+app.jinja_env.filters["source_label"] = source_label
+app.jinja_env.filters["category_icon"] = category_icon
+app.jinja_env.filters["display_name"] = display_name
+
 
 # ══════════════════════════════════════════════════════════
 # OCR & PARSERS (same logic as receipt_reader.py)
