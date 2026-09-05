@@ -5,6 +5,7 @@ from PIL import Image
 import os, re, sys, hmac
 from datetime import datetime
 from collections import defaultdict
+from urllib.parse import urlparse
 
 app = Flask(__name__)
 
@@ -184,9 +185,22 @@ PARSER_REGISTRY = {
     'RHB': parse_generic, 'UNKNOWN': parse_generic,
 }
 
-def categorize(recipient):
+def known_categories():
+    """Map recipient (upper-cased) -> the last category the user assigned it,
+    so a merchant only needs to be corrected once."""
+    known = {}
+    for row in db_get_all():
+        rec = (row.get("recipient") or "").strip().upper()
+        cat = row.get("category")
+        if rec and rec != "NOT FOUND" and cat and cat != "Uncategorized":
+            known.setdefault(rec, cat)
+    return known
+
+def categorize(recipient, known=None):
     if not recipient: return "Uncategorized"
     r = recipient.upper()
+    if known and r in known:
+        return known[r]
     rules = {
         "Food & Dining":    ['GRABFOOD','FOODPANDA','MAMAK','MCDONALDS','KFC',
                              'SUBWAY','STARBUCKS','TEALIVE','CHATIME',
@@ -204,10 +218,10 @@ def categorize(recipient):
             if keyword in r: return category
     return "Uncategorized"
 
-def parse_receipt(text):
+def parse_receipt(text, known=None):
     source = detect_source(text)
     date, recipient, amount = PARSER_REGISTRY[source](text)
-    category = categorize(recipient)
+    category = categorize(recipient, known)
     return date, recipient, amount, category, source
 
 def extract_month(date_str):
@@ -385,13 +399,14 @@ def process_run():
         return jsonify({"results": [],
                         "summary": f"No new receipts found. ({len(all_files)} already processed)"})
 
+    known   = known_categories()
     results = []
     for filename in new_files:
         full_path = os.path.join(RECEIPTS_DIR, filename)
         try:
             img  = Image.open(full_path)
             text = pytesseract.image_to_string(img)
-            date, recipient, amount, category, source = parse_receipt(text)
+            date, recipient, amount, category, source = parse_receipt(text, known)
             db_insert(date or "Not found",
                       recipient or "Not found",
                       amount or 0,
@@ -439,7 +454,7 @@ def upload_from_shortcut():
         elif not text and not file:
             return jsonify({"status": "error", "message": "No image or text received"}), 400
 
-        date, recipient, amount, category, source = parse_receipt(text)
+        date, recipient, amount, category, source = parse_receipt(text, known_categories())
         details = request.form.get("details", "").strip()
 
         db_insert(
@@ -467,12 +482,18 @@ def edit(row_id):
     row  = next((r for r in rows if str(r["id"]) == row_id), None)
     if not row:
         return redirect(url_for("transactions"))
-    message = None
+
+    return_to = url_for("transactions")
+    parsed = urlparse(request.referrer or "")
+    if parsed.path == "/transactions":
+        return_to = "/transactions" + (f"?{parsed.query}" if parsed.query else "")
+
     if request.method == "POST":
+        return_to = request.form.get("return_to") or return_to
         action = request.form.get("action")
         if action == "delete":
             db_delete(row_id)
-            return redirect(url_for("transactions"))
+            return redirect(return_to)
         fields = ["date","recipient","amount","category","source","details"]
         for field in fields:
             val = request.form.get(field,"").strip()
@@ -481,12 +502,11 @@ def edit(row_id):
                     try: val = round(float(val), 2)
                     except: continue
                 db_update(row_id, field, val or None)
-        message = "success:Entry updated."
-        rows = db_get_all()
-        row  = next((r for r in rows if str(r["id"]) == row_id), None)
+        return redirect(return_to)
+
     return render_template("edit.html", row=row,
                            categories=PRESET_CATEGORIES,
-                           message=message)
+                           return_to=return_to)
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
