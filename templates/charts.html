@@ -48,7 +48,7 @@
     <div style="position:relative; height:{{ (chart_data.years|length * 34 + 30) }}px;"><canvas id="annualChart"></canvas></div>
 </div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+<script src="{{ url_for('static', filename='js/chart.umd.js') }}"></script>
 <script>
 const CHART_DATA = {{ chart_data | tojson }};
 

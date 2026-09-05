@@ -21,7 +21,7 @@
                 <a href="/transactions?month={{ month }}&category={{ cat }}"
                    style="display:flex; justify-content:space-between; padding:9px 0;
                           border-top:1px solid var(--border); text-decoration:none; color:var(--ink);">
-                    <span style="font-size:14px; color:var(--ink-2);">{{ cat }}</span>
+                    <span style="font-size:14px; color:var(--ink-2);">{{ cat | category_icon }} {{ cat }}</span>
                     <span style="font-size:14px; color:var(--accent); font-variant-numeric:tabular-nums;">
                         RM {{ "%.2f"|format(cat_total) }}
                         <span style="color:var(--ink-muted); font-size:12px;">

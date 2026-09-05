@@ -16,7 +16,7 @@
         <input type="text" name="date" value="{{ row.date }}">
 
         <label>Recipient</label>
-        <input type="text" name="recipient" value="{{ row.recipient }}">
+        <input type="text" name="recipient" value="{{ row.recipient | display_name }}">
 
         <label>Amount (RM)</label>
         <input type="number" name="amount" value="{{ row.amount }}"
@@ -35,7 +35,7 @@
         </select>
 
         <label>Banking app / source</label>
-        <input type="text" name="source" value="{{ row.source or '' }}" placeholder="e.g. Maybank, TNG, Cash">
+        <input type="text" name="source" value="{{ row.source | source_label if row.source else '' }}" placeholder="e.g. Maybank, TNG, Cash">
 
         <label>Details</label>
         <textarea name="details" placeholder="Any extra notes about this expense">{{ row.details or '' }}</textarea>
