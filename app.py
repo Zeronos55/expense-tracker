@@ -173,6 +173,16 @@ def known_categories():
             known.setdefault(rec, cat)
     return known
 
+def known_sources():
+    """Banking app / source values the user has actually used, most-used first."""
+    counts = defaultdict(int)
+    for row in db_get_all():
+        raw = row.get("source")
+        if not raw or raw in ("MANUAL", "UNKNOWN"):
+            continue
+        counts[source_label(raw)] += 1
+    return sorted(counts, key=lambda s: counts[s], reverse=True)
+
 def categorize(recipient, known=None):
     if not recipient: return "Uncategorized"
     r = recipient.upper()
@@ -326,15 +336,19 @@ def transactions():
 def add():
     message = None
     if request.method == "POST":
-        date      = request.form.get("date","").strip()
-        recipient = request.form.get("recipient","").strip()
-        amount    = request.form.get("amount","").strip()
-        category  = request.form.get("category","").strip()
-        custom    = request.form.get("custom_category","").strip()
-        source    = request.form.get("source","").strip() or "MANUAL"
-        details   = request.form.get("details","").strip()
+        date          = request.form.get("date","").strip()
+        recipient     = request.form.get("recipient","").strip()
+        amount        = request.form.get("amount","").strip()
+        category      = request.form.get("category","").strip()
+        custom        = request.form.get("custom_category","").strip()
+        source        = request.form.get("source","").strip()
+        custom_source = request.form.get("custom_source","").strip()
+        details       = request.form.get("details","").strip()
         if category == "custom" and custom:
             category = custom
+        if source == "custom":
+            source = custom_source
+        source = source or "MANUAL"
         if not date or not recipient or not amount:
             message = "error:Please fill in all fields."
         else:
@@ -346,6 +360,7 @@ def add():
                 message = f"error:Failed to save: {e}"
     return render_template("add.html",
                            categories=PRESET_CATEGORIES,
+                           sources=known_sources(),
                            message=message)
 
 SHORTCUT_SECRET = os.environ.get("SHORTCUT_SECRET")
@@ -410,7 +425,10 @@ def edit(row_id):
             return redirect(return_to)
         fields = ["date","recipient","amount","category","source","details"]
         for field in fields:
-            val = request.form.get(field,"").strip()
+            if field == "source" and request.form.get("source") == "custom":
+                val = request.form.get("custom_source","").strip()
+            else:
+                val = request.form.get(field,"").strip()
             if val or field == "details":
                 if field == "amount":
                     try: val = round(float(val), 2)
@@ -420,6 +438,7 @@ def edit(row_id):
 
     return render_template("edit.html", row=row,
                            categories=PRESET_CATEGORIES,
+                           sources=known_sources(),
                            return_to=return_to)
 
 if __name__ == "__main__":
