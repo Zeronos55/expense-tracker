@@ -34,7 +34,20 @@
         </div>
 
         <label>Banking app / source (optional)</label>
-        <input type="text" name="source" placeholder="e.g. Maybank, TNG, Cash">
+        <select name="source" id="sourceSelect"
+                onchange="document.getElementById('customSourceRow').style.display=
+                          this.value=='custom'?'block':'none'">
+            <option value="">Not specified</option>
+            {% for s in sources %}
+            <option value="{{ s }}">{{ s }}</option>
+            {% endfor %}
+            <option value="custom">Custom...</option>
+        </select>
+
+        <div id="customSourceRow" style="display:none;">
+            <label>Custom banking app / source</label>
+            <input type="text" name="custom_source" placeholder="e.g. Public Bank">
+        </div>
 
         <label>Details (optional)</label>
         <textarea name="details" placeholder="Any extra notes about this expense"></textarea>

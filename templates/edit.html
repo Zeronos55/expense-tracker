@@ -30,8 +30,23 @@
             {% endif %}
         </select>
 
+        {% set current_source = row.source | source_label if row.source else '' %}
+        {% set source_is_custom = current_source and current_source not in sources %}
         <label>Banking app / source</label>
-        <input type="text" name="source" value="{{ row.source | source_label if row.source else '' }}" placeholder="e.g. Maybank, TNG, Cash">
+        <select name="source" id="sourceSelect"
+                onchange="document.getElementById('customSourceRow').style.display=
+                          this.value=='custom'?'block':'none'">
+            <option value="">Not specified</option>
+            {% for s in sources %}
+            <option value="{{ s }}" {{ 'selected' if current_source == s }}>{{ s }}</option>
+            {% endfor %}
+            <option value="custom" {{ 'selected' if source_is_custom }}>Custom...</option>
+        </select>
+
+        <div id="customSourceRow" style="{{ 'display:block;' if source_is_custom else 'display:none;' }}">
+            <label>Custom banking app / source</label>
+            <input type="text" name="custom_source" value="{{ current_source if source_is_custom else '' }}" placeholder="e.g. Public Bank">
+        </div>
 
         <label>Details</label>
         <textarea name="details" placeholder="Any extra notes about this expense">{{ row.details or '' }}</textarea>
