@@ -264,11 +264,14 @@ def build_chart_data(summary):
 
         for month in months:
             month_total = 0.0
+            month_cats = {}
             for cat, rows in summary[year][month].items():
                 amt = sum(r["amount"] for r in rows)
                 month_total += amt
                 cat_totals[cat] += amt
-            month_points.append({"label": month, "total": round(month_total, 2)})
+                month_cats[cat] = round(amt, 2)
+            month_points.append({"label": month, "total": round(month_total, 2),
+                                  "categories": month_cats})
             year_total += month_total
 
         monthly[year]  = month_points
