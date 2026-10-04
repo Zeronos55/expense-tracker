@@ -15,3 +15,5 @@ services:
         sync: false
       - key: APP_PASSWORD
         sync: false
+      - key: GEMINI_API_KEY   # optional: free-tier LLM fallback for unknown merchants
+        sync: false

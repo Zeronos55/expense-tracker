@@ -4,6 +4,7 @@ import os, re, hmac
 from datetime import datetime
 from collections import defaultdict
 from urllib.parse import urlparse
+from categorizer import classify, normalize_merchant, UNCATEGORIZED
 
 app = Flask(__name__)
 
@@ -162,16 +163,38 @@ PARSER_REGISTRY = {
     'RHB': parse_generic, 'UNKNOWN': parse_generic,
 }
 
-def known_categories():
-    """Map recipient (upper-cased) -> the last category the user assigned it,
-    so a merchant only needs to be corrected once."""
-    known = {}
+def merchant_rules():
+    """Learned rules {merchant_key: {merchant, category}}.
+
+    Seeded from past expenses (latest non-Uncategorized category per
+    merchant wins), then overridden by the persisted merchant_rules table
+    (user corrections beat cached LLM results)."""
+    rules = {}
     for row in db_get_all():
-        rec = (row.get("recipient") or "").strip().upper()
+        key, _ = normalize_merchant(row.get("recipient") or "")
         cat = row.get("category")
-        if rec and rec != "NOT FOUND" and cat and cat != "Uncategorized":
-            known.setdefault(rec, cat)
-    return known
+        if key and cat and cat != UNCATEGORIZED and key != "NOT FOUND":
+            rules.setdefault(key, {"merchant": None, "category": cat})
+    try:
+        saved = supabase.table("merchant_rules").select("*").execute().data or []
+    except Exception:
+        saved = []  # table not created yet
+    for r in sorted(saved, key=lambda r: r.get("source") == "user"):
+        rules[r["merchant_key"]] = {"merchant": r.get("merchant"),
+                                    "category": r["category"]}
+    return rules
+
+def save_merchant_rule(recipient, category, source, merchant=None):
+    key, display = normalize_merchant(recipient or "")
+    if not key or not category or category == UNCATEGORIZED or key == "NOT FOUND":
+        return
+    try:
+        supabase.table("merchant_rules").upsert({
+            "merchant_key": key, "merchant": merchant or display,
+            "category": category, "source": source,
+            "updated_at": datetime.utcnow().isoformat()}).execute()
+    except Exception:
+        pass  # learning is best-effort; never block saving an expense
 
 def known_sources():
     """Banking app / source values the user has actually used, most-used first."""
@@ -183,33 +206,13 @@ def known_sources():
         counts[source_label(raw)] += 1
     return sorted(counts, key=lambda s: counts[s], reverse=True)
 
-def categorize(recipient, known=None):
-    if not recipient: return "Uncategorized"
-    r = recipient.upper()
-    if known and r in known:
-        return known[r]
-    rules = {
-        "Food & Dining":    ['GRABFOOD','FOODPANDA','MAMAK','MCDONALDS','KFC',
-                             'SUBWAY','STARBUCKS','TEALIVE','CHATIME',
-                             'RESTAURANT','GRABPAY','JUICE','CAFE','BAKERY','PIZZA','BURGER'],
-        "Transport":        ['MYRAPID','TOUCHNGO','PARKING','TOLL','GRAB',
-                             'PETRONAS','SHELL','PETRON','BHP','CALTEX'],
-        "Shopping":         ['SHOPEE','LAZADA','AMAZON','AEON','IKEA',
-                             'UNIQLO','ZARA','GUARDIAN','WATSONS','MARKETPLACE'],
-        "Entertainment":    ['NETFLIX','SPOTIFY','STEAM','YOUTUBE','DISNEY','GSC','TGV'],
-        "Health & Fitness": ['FITNESS','GYM','YOGA','CLINIC','PHARMACY','HOSPITAL','ARK'],
-        "Utilities":        ['TNB','SYABAS','UNIFI','MAXIS','CELCOM','DIGI','TELEKOM'],
-    }
-    for category, keywords in rules.items():
-        for keyword in keywords:
-            if keyword in r: return category
-    return "Uncategorized"
-
-def parse_receipt(text, known=None):
+def parse_receipt(text, rules=None):
     source = detect_source(text)
     date, recipient, amount = PARSER_REGISTRY[source](text)
-    category = categorize(recipient, known)
-    return date, recipient, amount, category, source
+    result = classify(recipient, rules, PRESET_CATEGORIES, use_llm=True)
+    if result["method"] == "llm":
+        save_merchant_rule(recipient, result["category"], "llm", result["merchant"])
+    return date, recipient, amount, result["category"], source
 
 def extract_month(date_str):
     for fmt in ["%d/%m/%Y","%d-%m-%Y","%Y-%m-%d",
@@ -386,7 +389,7 @@ def upload_from_shortcut():
         if not text:
             return jsonify({"status": "error", "message": "No text received"}), 400
 
-        date, recipient, amount, category, source = parse_receipt(text, known_categories())
+        date, recipient, amount, category, source = parse_receipt(text, merchant_rules())
         details = request.form.get("details", "").strip()
 
         db_insert(
@@ -437,6 +440,8 @@ def edit(row_id):
                     try: val = round(float(val), 2)
                     except: continue
                 db_update(row_id, field, val or None)
+        save_merchant_rule(request.form.get("recipient") or row.get("recipient"),
+                           request.form.get("category", "").strip(), "user")
         return redirect(return_to)
 
     return render_template("edit.html", row=row,
