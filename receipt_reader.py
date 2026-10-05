@@ -12,6 +12,7 @@ from datetime import datetime
 from collections import defaultdict
 
 import sys
+from categorizer import categorize
 
 # Works both when running as a script and as a packaged .exe
 if getattr(sys, 'frozen', False):
@@ -234,36 +235,6 @@ def parse_receipt(text):
     date, recipient, amount = PARSER_REGISTRY[source](text)
     category = categorize(recipient)
     return date, recipient, amount, category, source
-
-
-# ══════════════════════════════════════════════════════════
-# CATEGORIZATION
-# ══════════════════════════════════════════════════════════
-
-def categorize(recipient):
-    if not recipient: return "Uncategorized"
-    r = recipient.upper()
-    rules = {
-        "Food & Dining":    ['GRABFOOD','FOODPANDA','MAMAK','MCDONALDS','KFC',
-                             'SUBWAY','STARBUCKS','TEALIVE','CHATIME',
-                             'RESTAURANT','GRABPAY','JUICE','CAFE','BAKERY',
-                             'PIZZA','BURGER'],
-        "Transport":        ['MYRAPID','TOUCHNGO','PARKING','TOLL','GRAB',
-                             'PETRONAS','SHELL','PETRON','BHP','CALTEX'],
-        "Shopping":         ['SHOPEE','LAZADA','AMAZON','AEON','IKEA',
-                             'UNIQLO','ZARA','GUARDIAN','WATSONS','MARKETPLACE'],
-        "Entertainment":    ['NETFLIX','SPOTIFY','STEAM','YOUTUBE',
-                             'DISNEY','GSC','TGV'],
-        "Health & Fitness": ['FITNESS','GYM','YOGA','CLINIC','PHARMACY',
-                             'HOSPITAL','ARK'],
-        "Utilities":        ['TNB','SYABAS','UNIFI','MAXIS','CELCOM',
-                             'DIGI','TELEKOM'],
-    }
-    for category, keywords in rules.items():
-        for keyword in keywords:
-            if keyword in r:
-                return category
-    return "Uncategorized"
 
 
 # ══════════════════════════════════════════════════════════
