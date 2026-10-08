@@ -1,50 +1,241 @@
 {% extends "base.html" %}
-{% block content %}
+{% set month_param = view.short ~ ' ' ~ view.year %}
 
-{% for year in years %}
-<div class="card">
-    <h2 style="font-size:13px; font-weight:700; text-transform:uppercase; letter-spacing:0.03em; color:var(--ink-muted); margin-bottom:14px;">{{ year }}</h2>
-    {% set year_total = namespace(val=0) %}
-    {% for month in summary[year]|sort(attribute=month_sort_key) %}
-        {% set month_total = namespace(val=0) %}
-        {% for cat, rows in summary[year][month].items() %}
-            {% set month_total.val = month_total.val + rows|sum(attribute='amount') %}
-        {% endfor %}
-        {% set year_total.val = year_total.val + month_total.val %}
-        <div style="margin-bottom:16px;">
-            <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
-                <span style="font-weight:600; font-size:14.5px;">{{ month }}</span>
-                <span style="color:var(--ink-muted); font-variant-numeric:tabular-nums; font-size:14.5px;">RM {{ "%.2f"|format(month_total.val) }}</span>
-            </div>
-            {% for cat, rows in summary[year][month].items()|sort %}
-                {% set cat_total = rows|sum(attribute='amount') %}
-                <a href="/transactions?month={{ month }}&category={{ cat }}"
-                   style="display:flex; justify-content:space-between; padding:9px 0;
-                          border-top:1px solid var(--border); text-decoration:none; color:var(--ink);">
-                    <span style="font-size:14px; color:var(--ink-2);">{{ cat | category_icon }} {{ cat }}</span>
-                    <span style="font-size:14px; color:var(--accent); font-variant-numeric:tabular-nums;">
-                        RM {{ "%.2f"|format(cat_total) }}
-                        <span style="color:var(--ink-muted); font-size:12px;">
-                            ({{ rows|length }})
-                        </span>
-                    </span>
-                </a>
-            {% endfor %}
-        </div>
-    {% endfor %}
-    <div style="border-top:1px solid var(--border); padding-top:12px;
-                display:flex; justify-content:space-between; font-weight:700; font-size:15px;">
-        <span>Total {{ year }}</span>
-        <span style="font-variant-numeric:tabular-nums;">RM {{ "%.2f"|format(year_total.val) }}</span>
+{% block head %}
+<style>
+    .hero {
+        border-radius: 26px; padding: 18px 18px 20px; margin-bottom: 12px;
+        background: linear-gradient(135deg, var(--hero-a), var(--hero-b));
+        border: 1px solid var(--border);
+    }
+    .month-nav { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+    .month-nav .m { font-weight: 700; font-size: 15px; }
+    .month-nav a, .month-nav span.off {
+        width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center;
+        background: color-mix(in srgb, var(--raised) 70%, transparent);
+        text-decoration: none; font-size: 18px; font-weight: 700; color: var(--ink);
+    }
+    .month-nav span.off { opacity: 0.3; }
+    .hero .lbl { font-size: 13px; font-weight: 600; color: var(--ink-2); }
+    .hero .total { font-size: 40px; font-weight: 800; letter-spacing: -0.03em; line-height: 1.15; margin-top: 2px; }
+    .hero .total small { font-size: 20px; font-weight: 700; color: var(--ink-2); margin-right: 4px; }
+    .change { display: inline-flex; align-items: center; gap: 4px; margin-top: 8px;
+              padding: 4px 10px; border-radius: 999px; font-size: 13px; font-weight: 700;
+              background: color-mix(in srgb, var(--raised) 70%, transparent); }
+    .change.up { color: var(--warn); } .change.down { color: var(--good); }
+    .change span { color: var(--ink-2); font-weight: 500; }
+
+    .donut-wrap { position: relative; width: 210px; height: 210px; margin: 2px auto 16px; }
+    .donut-center { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; pointer-events: none; }
+    .donut-center .v { font-size: 22px; font-weight: 800; letter-spacing: -0.02em; }
+    .donut-center .k { font-size: 12px; color: var(--ink-muted); font-weight: 600; }
+    .cat-row { display: flex; align-items: center; gap: 12px; padding: 9px 0; text-decoration: none; color: var(--ink); }
+    .cat-row + .cat-row { border-top: 1px solid var(--border); }
+    .cat-row .main { flex: 1; min-width: 0; }
+    .cat-row .top { display: flex; justify-content: space-between; gap: 8px; font-size: 14.5px; font-weight: 600; }
+    .cat-row .bar { height: 6px; border-radius: 999px; background: var(--surface); margin-top: 7px; overflow: hidden; }
+    .cat-row .bar i { display: block; height: 100%; border-radius: 999px; background: var(--c); }
+    .cat-row .sub { font-size: 12px; color: var(--ink-muted); margin-top: 4px; }
+
+    .legend { display: flex; gap: 14px; font-size: 12px; color: var(--ink-2); font-weight: 600; margin-bottom: 8px; }
+    .legend span { display: inline-flex; align-items: center; gap: 6px; }
+    .legend i { width: 16px; height: 0; border-top: 2.5px solid var(--accent); }
+    .legend i.dash { border-top: 2.5px dashed var(--ink-muted); }
+
+    .insights { display: flex; gap: 10px; overflow-x: auto; scroll-snap-type: x mandatory;
+                margin: 0 -16px 12px; padding: 2px 16px 6px; scrollbar-width: none; }
+    .insights::-webkit-scrollbar { display: none; }
+    .insight { flex: 0 0 78%; scroll-snap-align: start; border-radius: 22px; padding: 16px;
+               background: var(--raised); border: 1px solid var(--border); box-shadow: var(--shadow);
+               text-decoration: none; color: var(--ink); display: flex; gap: 12px; }
+    .insight .ic { width: 38px; height: 38px; border-radius: 12px; display: grid; place-items: center;
+                   font-size: 18px; background: var(--accent-wash); flex-shrink: 0; }
+    .insight.warn .ic { background: var(--warn-wash); }
+    .insight.up .ic { background: var(--warn-wash); }
+    .insight.down .ic { background: var(--good-wash); }
+    .insight h3 { font-size: 14.5px; font-weight: 700; margin-bottom: 3px; }
+    .insight p { font-size: 13px; color: var(--ink-2); line-height: 1.4; }
+    .section-h { display: flex; justify-content: space-between; align-items: baseline;
+                 font-size: 16px; font-weight: 800; margin: 18px 4px 8px; }
+    .section-h a { font-size: 13px; font-weight: 600; color: var(--accent); text-decoration: none; }
+</style>
+{% endblock %}
+
+{% block header %}
+<header class="top">
+    <div>
+        <p class="sub" style="margin:0 0 2px;" id="greet">Hello 👋</p>
+        <h1>Your spending</h1>
     </div>
-</div>
-{% endfor %}
+    <a href="/ai-status" class="chip" title="Auto-categorise status">✨ AI</a>
+</header>
+{% endblock %}
 
-{% if not years %}
-<div class="card" style="text-align:center; padding:44px 16px;">
-    <p style="font-size:32px; margin-bottom:12px;">📭</p>
-    <p style="color:var(--ink-muted); font-size:14.5px;">No expenses yet.<br>Add one or process a receipt!</p>
+{% block content %}
+{% if not has_data %}
+<div class="card empty">
+    <p class="big">📭</p>
+    <p>No expenses yet.<br>Add one, or share a receipt screenshot to your Shortcut.</p>
+</div>
+{% else %}
+
+<section class="hero">
+    <div class="month-nav">
+        {% if prev_link %}<a href="/?m={{ prev_link }}" aria-label="Previous month">‹</a>{% else %}<span class="off">‹</span>{% endif %}
+        <span class="m">{{ view.label }}</span>
+        {% if next_link %}<a href="/?m={{ next_link }}" aria-label="Next month">›</a>{% else %}<span class="off">›</span>{% endif %}
+    </div>
+    <p class="lbl">Spent in {{ view.short }}</p>
+    <p class="total num"><small>RM</small>{{ view.total | rm }}</p>
+    {% if view.change is not none %}
+    <span class="change {{ 'up' if view.change > 0 else 'down' }}">
+        {{ '▲' if view.change > 0 else '▼' }} {{ '%.0f' | format(view.change | abs) }}%
+        <span>vs RM {{ view.prev_total | rm }} {{ 'by this day in ' if view.to_date else 'in ' }}{{ view.prev_short }}</span>
+    </span>
+    {% elif view.count %}
+    <span class="change"><span>{{ view.count }} expense{{ 's' if view.count != 1 }}</span></span>
+    {% endif %}
+</section>
+
+{% if view.insights %}
+<div class="insights">
+    {% for c in view.insights %}
+    {% if c.href %}<a href="{{ c.href }}" class="insight {{ c.tone }}">{% else %}<div class="insight {{ c.tone }}">{% endif %}
+        <div class="ic">{{ c.icon }}</div>
+        <div><h3>{{ c.title }}</h3><p>{{ c.body }}</p></div>
+    {% if c.href %}</a>{% else %}</div>{% endif %}
+    {% endfor %}
 </div>
 {% endif %}
 
+{% if view.categories %}
+<div class="card">
+    <p class="card-title">Where it went <small>{{ view.count }} expenses</small></p>
+    <div class="donut-wrap">
+        <canvas id="donut" aria-label="Spending by category"></canvas>
+        <div class="donut-center"><div><p class="v num">RM {{ '%.0f' | format(view.total) }}</p><p class="k">{{ view.categories|length }} categories</p></div></div>
+    </div>
+    {% for c in view.categories %}
+    <a class="cat-row cat-{{ c.slot }}" href="/transactions?month={{ month_param | urlencode }}&category={{ c.label | urlencode }}">
+        <div class="cat-icon">{{ c.icon }}</div>
+        <div class="main">
+            <div class="top"><span>{{ c.label }}</span><span class="num">RM {{ c.total | rm }}</span></div>
+            <div class="bar"><i style="width:{{ '%.1f' | format(c.share) }}%"></i></div>
+            <p class="sub">{{ '%.0f' | format(c.share) }}% · {{ c.count }} item{{ 's' if c.count != 1 }}</p>
+        </div>
+    </a>
+    {% endfor %}
+</div>
+
+<div class="card">
+    <p class="card-title">Spending pace <small>cumulative</small></p>
+    <div class="legend">
+        <span><i></i>{{ view.short }}</span>
+        <span><i class="dash"></i>{{ view.prev_short }}</span>
+    </div>
+    <div style="position:relative; height:190px;"><canvas id="pace" aria-label="Cumulative spend this month vs last month"></canvas></div>
+</div>
+{% else %}
+<div class="card empty"><p class="big">🌱</p><p>Nothing spent in {{ view.label }} yet.</p></div>
+{% endif %}
+
+{% if view.groups %}
+<div class="section-h">Recent <a href="/transactions?month={{ month_param | urlencode }}">See all</a></div>
+{% for g in view.groups %}
+<div class="tx-group">
+    <div class="tx-head"><span>{{ g.label }}</span><span class="num">RM {{ g.total | rm }}</span></div>
+    <div class="tx-list">
+        {% for row in g.rows %}
+        <a class="tx" href="/edit/{{ row.id }}">
+            <div class="cat-icon cat-{{ row.category | category_slot }}">{{ row.category | category_icon }}</div>
+            <div class="main">
+                <p class="name">{{ row.recipient | display_name }}</p>
+                <p class="meta">{{ row.category }}{% if row.source and row.source not in ('MANUAL','UNKNOWN') %} · {{ row.source | source_label }}{% endif %}</p>
+            </div>
+            <span class="amt num">−RM {{ row._amount | rm }}</span>
+        </a>
+        {% endfor %}
+    </div>
+</div>
+{% endfor %}
+{% endif %}
+
+<script src="{{ url_for('static', filename='js/chart.umd.js') }}"></script>
+<script>
+const VIEW = {{ {"categories": view.categories, "series": view.series, "short": view.short,
+                  "prev_short": view.prev_short, "month_param": month_param} | tojson }};
+const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const fmt = (n) => 'RM ' + n.toLocaleString('en-MY', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+Chart.defaults.font.family = "'Plus Jakarta Sans', -apple-system, sans-serif";
+Chart.defaults.font.size = 12;
+
+function tooltip(extra) {
+    return Object.assign({
+        backgroundColor: css('--raised'), titleColor: css('--ink'), bodyColor: css('--ink-2'),
+        borderColor: css('--border'), borderWidth: 1, padding: 10, cornerRadius: 12,
+        titleFont: {weight: '700'}, boxPadding: 4,
+    }, extra);
+}
+
+let donut, pace;
+function render() {
+    const cats = VIEW.categories;
+    if (!cats.length) return;
+    if (donut) donut.destroy();
+    donut = new Chart(document.getElementById('donut'), {
+        type: 'doughnut',
+        data: { labels: cats.map(c => c.label),
+                datasets: [{ data: cats.map(c => c.total),
+                             backgroundColor: cats.map(c => css('--cat-' + c.slot)),
+                             borderColor: css('--raised'), borderWidth: 2,
+                             borderRadius: 6, hoverOffset: 6 }] },
+        options: {
+            cutout: '72%', responsive: true, maintainAspectRatio: false,
+            layout: { padding: 6 },
+            plugins: { legend: { display: false },
+                       tooltip: tooltip({ callbacks: { label: (ctx) => ` ${fmt(ctx.parsed)} · ${cats[ctx.dataIndex].share.toFixed(0)}%` } }) },
+            onClick: (e, els) => {
+                if (!els.length) return;
+                const c = cats[els[0].index].label;
+                location.href = '/transactions?month=' + encodeURIComponent(VIEW.month_param) + '&category=' + encodeURIComponent(c);
+            }
+        }
+    });
+
+    const s = VIEW.series;
+    const labels = Array.from({length: s.days}, (_, i) => i + 1);
+    if (pace) pace.destroy();
+    pace = new Chart(document.getElementById('pace'), {
+        type: 'line',
+        data: { labels, datasets: [
+            { label: VIEW.short, data: s.this, borderColor: css('--accent'), borderWidth: 2.5,
+              backgroundColor: css('--accent-wash'), fill: 'origin', tension: 0.35,
+              pointRadius: 0, pointHoverRadius: 5, spanGaps: false },
+            { label: VIEW.prev_short, data: s.last.slice(0, s.days), borderColor: css('--ink-muted'),
+              borderWidth: 2, borderDash: [5, 5], tension: 0.35, pointRadius: 0, pointHoverRadius: 4, fill: false }
+        ]},
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: { legend: { display: false },
+                       tooltip: tooltip({ callbacks: {
+                           title: (items) => 'Day ' + items[0].label,
+                           label: (ctx) => ` ${ctx.dataset.label}: ${ctx.parsed.y == null ? '—' : fmt(ctx.parsed.y)}` } }) },
+            scales: {
+                x: { grid: { display: false }, border: { display: false },
+                     ticks: { color: css('--ink-muted'), maxTicksLimit: 6, maxRotation: 0 } },
+                y: { beginAtZero: true, grid: { color: css('--gridline') }, border: { display: false },
+                     ticks: { color: css('--ink-muted'), maxTicksLimit: 4, callback: v => 'RM' + v } }
+            }
+        }
+    });
+}
+render();
+window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', render);
+
+const h = new Date().getHours();
+document.getElementById('greet').textContent =
+    (h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening') + ' 👋';
+</script>
+{% endif %}
 {% endblock %}

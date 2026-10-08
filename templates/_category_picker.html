@@ -1,0 +1,22 @@
+{# Category chip picker. Needs: categories, current (selected value or None). #}
+{% set is_custom = current and current not in categories and current != 'Uncategorized' %}
+<label>Category</label>
+<div class="chip-pick" role="radiogroup" aria-label="Category">
+    {% for cat in categories %}
+    <span class="cat-{{ cat | category_slot }}">
+        <input type="radio" name="category" id="cat-{{ loop.index }}" value="{{ cat }}"
+               {{ 'checked' if current == cat or (not current and loop.first) }}
+               onchange="document.getElementById('customRow').style.display='none'">
+        <label class="chip" for="cat-{{ loop.index }}">{{ cat | category_icon }} {{ cat }}</label>
+    </span>
+    {% endfor %}
+    <span class="cat-other">
+        <input type="radio" name="category" id="cat-custom" value="custom" {{ 'checked' if is_custom }}
+               onchange="document.getElementById('customRow').style.display='block'">
+        <label class="chip" for="cat-custom">🏷️ Other…</label>
+    </span>
+</div>
+<div id="customRow" style="display:{{ 'block' if is_custom else 'none' }};">
+    <label>Custom category name</label>
+    <input type="text" name="custom_category" value="{{ current if is_custom else '' }}" placeholder="e.g. Birthday">
+</div>
