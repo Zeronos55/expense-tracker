@@ -15,5 +15,7 @@ services:
         sync: false
       - key: APP_PASSWORD
         sync: false
-      - key: GEMINI_API_KEY   # optional: free-tier LLM fallback for unknown merchants
+      - key: GEMINI_API_KEY   # recommended: free-tier Gemini reads receipts + categorises
+        sync: false
+      - key: GEMINI_MODEL     # optional, defaults to gemini-2.5-flash
         sync: false

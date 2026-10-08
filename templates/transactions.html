@@ -1,61 +1,61 @@
 {% extends "base.html" %}
-{% block content %}
+{% block title %}History{% endblock %}
+{% block subtitle %}<p class="sub">{{ rows|length }} entr{{ 'y' if rows|length == 1 else 'ies' }}{% if rows %} · RM {{ total | rm }}{% endif %}</p>{% endblock %}
 
-<div class="card" style="padding:12px;">
-    <form method="get" style="display:flex; gap:8px;">
-        <select name="month" onchange="this.form.submit()" style="flex:1; margin:0;">
-            <option value="">All months</option>
-            {% for m in months %}
-            <option value="{{ m }}" {{ 'selected' if selected_month == m }}>{{ m }}</option>
-            {% endfor %}
-        </select>
-        <select name="category" onchange="this.form.submit()" style="flex:1; margin:0;">
-            <option value="">All categories</option>
-            {% for c in categories %}
-            <option value="{{ c }}" {{ 'selected' if selected_category == c }}>{{ c }}</option>
-            {% endfor %}
-        </select>
-    </form>
+{% block content %}
+{% if message %}<div class="msg-info">{{ message }}</div>{% endif %}
+
+<form method="get" id="filters">
+    {% if review %}<input type="hidden" name="review" value="1">{% endif %}
+    {% if selected_category %}<input type="hidden" name="category" value="{{ selected_category }}">{% endif %}
+    <select name="month" onchange="this.form.submit()" style="margin-bottom:10px;">
+        <option value="">All months</option>
+        {% for m in months %}
+        <option value="{{ m }}" {{ 'selected' if selected_month == m }}>{{ m }}</option>
+        {% endfor %}
+    </select>
+</form>
+
+{% set base_q = ('month=' ~ (selected_month|urlencode) ~ '&') if selected_month else '' %}
+<div class="chips">
+    <a class="chip {{ 'on' if not selected_category and not review }}" href="/transactions?{{ base_q }}">All</a>
+    {% if review_count %}
+    <a class="chip {{ 'on' if review }}" href="/transactions?{{ base_q }}review=1">🔎 Needs review <span class="count">{{ review_count }}</span></a>
+    {% endif %}
+    {% for c in categories %}
+    <a class="chip tint cat-{{ c | category_slot }} {{ 'on' if selected_category == c }}"
+       href="/transactions?{{ base_q }}category={{ c | urlencode }}">{{ c | category_icon }} {{ c }}</a>
+    {% endfor %}
 </div>
 
+{% if review %}
+<div class="card" style="padding:14px 16px;">
+    <p style="font-size:13.5px; color:var(--ink-2); line-height:1.45; margin-bottom:10px;">
+        These entries have no clear merchant, amount, date or category. Let the AI retry the ones that
+        have a real merchant name; fix the rest by tapping them.
+    </p>
+    <form method="post" action="/recategorise" style="margin:0;">
+        <button class="btn btn-primary" style="margin:0;" type="submit">✨ Auto-categorise again</button>
+    </form>
+</div>
+{% endif %}
+
 {% if rows %}
+<div class="tx-list">
     {% for row in rows %}
-    <a href="/edit/{{ row.id }}" style="text-decoration:none; color:var(--ink);"
-       onclick="sessionStorage.setItem('txScrollY', window.scrollY)">
-        <div class="card" style="padding:14px 16px;">
-            <div style="display:flex; align-items:flex-start; gap:12px;">
-                <div style="font-size:22px; line-height:1.2; flex-shrink:0;" aria-hidden="true">{{ row.category | category_icon }}</div>
-                <div style="min-width:0; flex:1;">
-                    <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px;">
-                        <p style="font-weight:600; font-size:15px;">{{ row.recipient | display_name }}</p>
-                        <span style="font-weight:700; font-size:16px; color:var(--accent); font-variant-numeric:tabular-nums; white-space:nowrap;">
-                            RM {{ "%.2f"|format(row.amount) }}
-                        </span>
-                    </div>
-                    <p style="font-size:12.5px; color:var(--ink-muted); margin-top:3px;">
-                        {{ row.date }} · {{ row.category }}
-                    </p>
-                    {% if row.source and row.source not in ('MANUAL','UNKNOWN') %}
-                    <span style="display:inline-block; margin-top:6px; padding:2px 9px; font-size:11.5px;
-                                 font-weight:600; color:var(--ink-2); background:var(--surface);
-                                 border:1px solid var(--border); border-radius:999px;">
-                        {{ row.source | source_label }}
-                    </span>
-                    {% endif %}
-                    {% if row.details %}
-                    <p style="font-size:12.5px; color:var(--ink-2); margin-top:6px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
-                        {{ row.details }}
-                    </p>
-                    {% endif %}
-                </div>
-            </div>
+    <a class="tx" href="/edit/{{ row.id }}" onclick="sessionStorage.setItem('txScrollY', window.scrollY)">
+        <div class="cat-icon cat-{{ row.category | category_slot }}">{{ row.category | category_icon }}</div>
+        <div class="main">
+            <p class="name">{{ row.recipient | display_name }}{% if row._review %}<span class="badge-review">review</span>{% endif %}</p>
+            <p class="meta">{{ row.date }} · {{ row.category }}{% if row.source and row.source not in ('MANUAL','UNKNOWN') %} · {{ row.source | source_label }}{% endif %}</p>
+            {% if row.details %}<p class="meta" style="color:var(--ink-2);">{{ row.details }}</p>{% endif %}
         </div>
+        <span class="amt num">RM {{ row.amount | rm }}</span>
     </a>
     {% endfor %}
+</div>
 {% else %}
-    <div class="card" style="text-align:center; padding:44px 16px;">
-        <p style="color:var(--ink-muted); font-size:14.5px;">No transactions found.</p>
-    </div>
+<div class="card empty"><p class="big">🧾</p><p>No transactions found.</p></div>
 {% endif %}
 
 <script>
@@ -67,5 +67,4 @@
     }
 })();
 </script>
-
 {% endblock %}

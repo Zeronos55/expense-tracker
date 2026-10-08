@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Auto-categorise{% endblock %}
+{% block subtitle %}<p class="sub">Gemini · {{ model }}</p>{% endblock %}
+
+{% block content %}
+<div class="card">
+    <p class="card-title">Status</p>
+    <div class="tx-list" style="box-shadow:none;">
+        <div class="tx"><div class="main"><p class="name">API key</p><p class="meta">GEMINI_API_KEY on Render</p></div>
+            <span class="amt" style="color:{{ 'var(--good)' if key_set else 'var(--critical)' }}">{{ '✓ Set' if key_set else '✗ Missing' }}</span></div>
+        <div class="tx"><div class="main"><p class="name">Model</p><p class="meta">GEMINI_MODEL (optional)</p></div>
+            <span class="amt">{{ model }}</span></div>
+        <div class="tx"><div class="main"><p class="name">Learned merchants</p><p class="meta">Rules from your edits + AI results</p></div>
+            <span class="amt">{{ rule_count if rule_count is not none else 'table missing' }}</span></div>
+    </div>
+    {% if last_error and not test %}
+    <div class="msg-error" style="margin:12px 0 0;">Last AI error: {{ last_error }}</div>
+    {% endif %}
+    {% if not key_set %}
+    <p style="font-size:13.5px; color:var(--ink-2); line-height:1.5; margin-top:12px;">
+        Get a free key at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a>,
+        then add it in Render → your service → Environment as <code>GEMINI_API_KEY</code>.
+    </p>
+    {% endif %}
+</div>
+
+<div class="card">
+    <p class="card-title">Test with a receipt</p>
+    <form method="post">
+        <label>OCR text (leave as-is to use the sample)</label>
+        <textarea name="text" rows="6">{{ test.input if test else sample }}</textarea>
+        <button class="btn btn-primary" type="submit" style="margin:0;">Run test</button>
+    </form>
+    {% if test %}
+    {% if test.result %}
+    <div class="msg-success" style="margin:12px 0 0;">
+        ✓ Worked in {{ test.seconds }}s<br>
+        <b>{{ test.result.merchant or '—' }}</b> · RM {{ test.result.amount or '—' }} · {{ test.result.date or '—' }} · {{ test.result.category }}
+    </div>
+    {% else %}
+    <div class="msg-error" style="margin:12px 0 0;">✗ Failed after {{ test.seconds }}s: {{ test.error or 'no response' }}</div>
+    {% endif %}
+    {% endif %}
+</div>
+{% endblock %}

@@ -7,16 +7,28 @@ Cascade (first hit wins):
   2. learned rule, fuzzy    (similar merchant seen before)
   3. keyword rules          (word-boundary, ordered)
   4. Gemini free tier       (only when use_llm and GEMINI_API_KEY is set)
+     app.py additionally sends the whole OCR text to llm_parse_receipt when
+     the regex parsers miss the payee/amount/date.
   5. "Uncategorized"
 """
 import difflib
 import json
+import logging
 import os
 import re
+import time
+import urllib.error
 import urllib.request
 
 UNCATEGORIZED = "Uncategorized"
 FUZZY_THRESHOLD = 0.85
+
+# Receipt field labels the regex parsers sometimes grab instead of a payee.
+LABEL_BLOCKLIST = {"NOT FOUND", "WALLET", "EWALLET", "E WALLET", "TRANSACTION TYPE",
+                   "TRANSACTION", "REFERENCE NO", "REFERENCE", "REF NO", "EMAIL",
+                   "LEAD", "PAYMENT DETAILS", "DETAILS", "STATUS", "SUCCESSFUL",
+                   "DUITNOW QR", "DUITNOW", "AMOUNT", "TOTAL", "DATE", "MERCHANT",
+                   "RECIPIENT", "PAY TO", "TO", "FROM", "TNG", "ACCOUNT"}
 
 # Tokens that carry no merchant identity.
 NOISE_TOKENS = {"SDN", "BHD", "BERHAD", "SB", "ENTERPRISE", "ENT", "TRADING",
@@ -85,6 +97,16 @@ def normalize_merchant(raw):
     return key, key.title() if raw.isupper() or raw.islower() else " ".join(raw.split())
 
 
+def is_label(recipient):
+    """True if the 'recipient' is really a receipt field label / junk."""
+    if not recipient or not recipient.strip():
+        return True
+    s = re.sub(r"[^A-Z0-9 ]", " ", recipient.upper())
+    s = " ".join(s.split())
+    return (not s or s in LABEL_BLOCKLIST or bool(re.fullmatch(r"RM\s*[\d.]+.*", s))
+            or not re.search(r"[A-Z]", s))
+
+
 def alias_key(name):
     return re.sub(r"[^A-Z0-9 &]", "", name.upper())
 
@@ -109,43 +131,120 @@ def _fuzzy_rule(key, rules):
     return best if best_score >= FUZZY_THRESHOLD else None
 
 
-def llm_classify(raw, categories):
-    """Ask Gemini (free tier) for {merchant, category}. None on any failure."""
+log = logging.getLogger(__name__)
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+GEMINI_TIMEOUT = 10   # x2 with the retry: stays inside gunicorn's 30s
+last_llm_error = None   # shown on /ai-status so failures aren't silent
+
+
+def gemini_model():
+    return os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+
+
+def _gemini_json(prompt, schema):
+    """POST a prompt to Gemini and return the parsed JSON reply, or None.
+
+    Retries once on 429/5xx; every failure is logged (never the key) and
+    remembered in last_llm_error."""
+    global last_llm_error
     api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key or not raw:
+    if not api_key:
+        last_llm_error = "GEMINI_API_KEY is not set"
         return None
-    model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
-    body = {
-        "contents": [{"parts": [{"text":
-            "Classify this merchant from a Malaysian payment receipt. "
-            f"Merchant text: {raw!r}. Return a clean merchant name and the "
-            f"best category from: {', '.join(categories)}. If unsure use "
-            f"'{UNCATEGORIZED}'."}]}],
-        "generationConfig": {
-            "responseMimeType": "application/json",
-            "responseSchema": {
-                "type": "OBJECT",
-                "properties": {"merchant": {"type": "STRING"},
-                               "category": {"type": "STRING",
-                                            "enum": list(categories) + [UNCATEGORIZED]}},
-                "required": ["merchant", "category"]},
-            "thinkingConfig": {"thinkingBudget": 0},
-        },
-    }
-    req = urllib.request.Request(
-        f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-        data=json.dumps(body).encode(),
-        headers={"Content-Type": "application/json", "x-goog-api-key": api_key})
+    body = json.dumps({
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"responseMimeType": "application/json",
+                             "responseSchema": schema,
+                             "thinkingConfig": {"thinkingBudget": 0}},
+    }).encode()
+    for attempt in (1, 2):
+        req = urllib.request.Request(
+            GEMINI_URL.format(model=gemini_model()), data=body,
+            headers={"Content-Type": "application/json", "x-goog-api-key": api_key})
+        try:
+            with urllib.request.urlopen(req, timeout=GEMINI_TIMEOUT) as resp:
+                data = json.load(resp)
+            text = data["candidates"][0]["content"]["parts"][0]["text"]
+            last_llm_error = None
+            return json.loads(text)
+        except urllib.error.HTTPError as e:
+            detail = e.read().decode("utf-8", "replace")[:300]
+            last_llm_error = f"HTTP {e.code}: {detail}"
+            if attempt == 1 and (e.code == 429 or e.code >= 500):
+                time.sleep(2)
+                continue
+        except Exception as e:
+            last_llm_error = f"{type(e).__name__}: {e}"
+        log.warning("Gemini call failed: %s", last_llm_error)
+        return None
+
+
+def _category_enum(categories):
+    return list(categories) + [UNCATEGORIZED]
+
+
+def llm_classify(raw, categories):
+    """Ask Gemini for {merchant, category} of a merchant string. None on failure."""
+    if not raw:
+        return None
+    out = _gemini_json(
+        "Classify this merchant from a Malaysian payment receipt. "
+        f"Merchant text: {raw!r}. Return a clean merchant name and the "
+        f"best category from: {', '.join(categories)}. If unsure use "
+        f"'{UNCATEGORIZED}'.",
+        {"type": "OBJECT",
+         "properties": {"merchant": {"type": "STRING"},
+                        "category": {"type": "STRING", "enum": _category_enum(categories)}},
+         "required": ["merchant", "category"]})
+    if not out or out.get("category") not in categories:
+        return None
+    return {"merchant": (out.get("merchant") or "").strip(), "category": out["category"]}
+
+
+RECEIPT_PROMPT = """You read OCR text from a screenshot of a Malaysian bank or e-wallet payment receipt (Touch 'n Go, Maybank, ShopeePay, DuitNow QR, CIMB, RHB, ...).
+Extract the payment. Rules:
+- merchant: who was paid (shop / person / service), cleaned up, e.g. "Luckin Coffee". NEVER a field label or app word such as "Wallet", "Transaction Type", "Reference No", "Payment Details", "Email", "Status", "Successful", "DuitNow QR", "eWallet". If no payee is visible, return "".
+- amount: the amount paid in RM as a number (no currency), 0 if not found.
+- date: DD/MM/YYYY, "" if not found.
+- category: best fit from: {categories}. Use "{uncat}" only if you really can't tell. Reloads/top-ups of a wallet are Transport only if it is a Touch 'n Go toll/transit reload, otherwise "{uncat}".
+
+Examples:
+"Transaction Type DuitNow QR\nMerchant HEXTAR LUCKIN COFFEE\nAmount RM12.90\n01/10/2026" -> {{"merchant": "Luckin Coffee", "amount": 12.90, "date": "01/10/2026", "category": "Food & Dining"}}
+"Successful\nRM 45.00\nPaid to\nTENAGA NASIONAL BERHAD\nReference No 8812\n3 Oct 2026" -> {{"merchant": "Tenaga Nasional (TNB)", "amount": 45.00, "date": "03/10/2026", "category": "Utilities"}}
+
+OCR text:
+<<<
+{text}
+>>>"""
+
+
+def llm_parse_receipt(text, categories):
+    """Ask Gemini to read a whole OCR'd receipt.
+
+    Returns {merchant, amount, date, category} (any may be empty) or None."""
+    if not text:
+        return None
+    out = _gemini_json(
+        RECEIPT_PROMPT.format(categories=", ".join(categories), uncat=UNCATEGORIZED,
+                              text=text[:4000]),
+        {"type": "OBJECT",
+         "properties": {"merchant": {"type": "STRING"}, "amount": {"type": "NUMBER"},
+                        "date": {"type": "STRING"},
+                        "category": {"type": "STRING", "enum": _category_enum(categories)}},
+         "required": ["merchant", "amount", "date", "category"]})
+    if not isinstance(out, dict):
+        return None
+    merchant = (out.get("merchant") or "").strip()
+    if is_label(merchant):
+        merchant = ""
     try:
-        with urllib.request.urlopen(req, timeout=4) as resp:
-            data = json.load(resp)
-        out = json.loads(data["candidates"][0]["content"]["parts"][0]["text"])
-        category = out.get("category")
-        if category not in categories:
-            return None
-        return {"merchant": (out.get("merchant") or "").strip(), "category": category}
-    except Exception:
-        return None
+        amount = round(float(out.get("amount") or 0), 2)
+    except (TypeError, ValueError):
+        amount = 0
+    category = out.get("category")
+    return {"merchant": merchant, "amount": amount if amount > 0 else None,
+            "date": (out.get("date") or "").strip() or None,
+            "category": category if category in categories else UNCATEGORIZED}
 
 
 def classify(recipient, rules=None, categories=(), use_llm=False):

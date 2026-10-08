@@ -12,9 +12,11 @@ summary, a chart view, and add, edit or delete any entry.
 
 | Route | What it does |
 |---|---|
-| `/` | Monthly/annual summary (text) |
-| `/charts` | Same data as visual charts — monthly spend, by-category breakdown, annual totals |
-| `/transactions` | Filterable list of all entries, tap one to edit |
+| `/` | Home dashboard — month total vs last month, insight cards, category donut, spending-pace line, recent expenses |
+| `/charts` | Trends — monthly spend by category, category totals, annual totals |
+| `/transactions` | Filterable list of all entries (month, category chips, **Needs review**), tap one to edit |
+| `/ai-status` | Is Gemini configured? Run a test receipt and see the raw result or error |
+| `/recategorise` | POST — retry auto-categorisation for Uncategorized entries (button on History → Needs review) |
 | `/add` | Manual entry form |
 | `/edit/<id>` | Edit or delete a single entry |
 | `/upload-from-shortcut` | POST endpoint for the iOS Shortcut (see below) |
@@ -28,6 +30,10 @@ Run `supabase_add_details_column.sql` once in the Supabase SQL Editor
 (Project → SQL Editor → New query → paste → Run) to add the new `details`
 column used by the forms and the Shortcut endpoint.
 
+Also run `supabase_add_merchant_rules.sql` (learned merchant → category
+rules) and `supabase_add_raw_text.sql` (keeps each upload's OCR text so bad
+entries can be re-read later).
+
 ### 2. Environment variables (Render → your service → Environment)
 
 | Variable | Required | Purpose |
@@ -37,8 +43,10 @@ column used by the forms and the Shortcut endpoint.
 | `APP_USERNAME` | yes | Username for logging into the app in a browser |
 | `APP_PASSWORD` | yes | Password for logging into the app in a browser |
 | `SHORTCUT_SECRET` | yes | A separate password only your Shortcut knows, for `/upload-from-shortcut` |
+| `GEMINI_API_KEY` | recommended | Free key from [aistudio.google.com/apikey](https://aistudio.google.com/apikey). Reads receipts the regex parsers can't and categorises unknown merchants |
+| `GEMINI_MODEL` | no | Defaults to `gemini-2.5-flash` |
 
-All four are now **required** — this app is personal, not public. Without
+The first five are **required** — this app is personal, not public. Without
 `APP_USERNAME`/`APP_PASSWORD` set, every page refuses to load; without
 `SHORTCUT_SECRET`, the Shortcut endpoint refuses uploads. Pick any random
 string for `SHORTCUT_SECRET` and `APP_PASSWORD`, e.g. generate one with
@@ -87,3 +95,24 @@ export APP_PASSWORD=...
 export SHORTCUT_SECRET=...
 python app.py
 ```
+
+## Auto-categorisation
+
+Each Shortcut upload goes through:
+
+1. **Regex parsers** per banking app pull out date, payee and amount.
+   Payees that are really field labels ("Wallet", "Transaction Type",
+   "Reference No", …) are thrown away.
+2. **Learned rules** (your past edits, exact or fuzzy match), then **keyword
+   rules**, pick the category.
+3. If the payee, amount or date is missing, or the category is still unknown, the
+   **whole OCR text goes to Gemini**, which returns merchant, amount, date and
+   category. Its answer fills the gaps and is remembered as a learned rule.
+   Your own corrections always win over the AI.
+
+If nothing seems to be categorised, open **`/ai-status`** (the ✨ AI button
+on Home). It shows whether `GEMINI_API_KEY` is set and lets you run a test
+receipt. Failures (bad key, quota, timeout) are shown there and logged to
+Render's logs as `Gemini call failed: …`. The Shortcut's JSON response also
+includes `method` (`llm`, `keyword`, `learned`, `fuzzy` or `none`) so you can
+see which step categorised it.
