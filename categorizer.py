@@ -137,27 +137,65 @@ GEMINI_TIMEOUT = 10   # x2 with the retry: stays inside gunicorn's 30s
 last_llm_error = None   # shown on /ai-status so failures aren't silent
 
 
+GEMINI_LIST_URL = "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000"
+GEMINI_FALLBACK_MODEL = "gemini-flash-latest"
+_SKIP_MODEL_WORDS = ("image", "tts", "audio", "live", "embedding", "thinking", "exp", "lite", "8b")
+_resolved_model = None   # cached auto-picked model; cleared when Google retires it
+_retired_models = set()  # models that 404'd for this key (listed but not usable)
+
+
+def _version_key(name):
+    """Sort key for e.g. 'gemini-3.0-flash': stable before preview, newer first."""
+    nums = tuple(int(n) for n in re.findall(r"\d+", name.split("-flash")[0]))
+    return (0 if "preview" in name else 1, nums)
+
+
+def list_flash_models():
+    """Flash models this key can call generateContent on, best first."""
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        return []
+    req = urllib.request.Request(GEMINI_LIST_URL, headers={"x-goog-api-key": api_key})
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        models = json.load(resp).get("models", [])
+    names = [m["name"].split("/", 1)[-1] for m in models
+             if "generateContent" in m.get("supportedGenerationMethods", [])]
+    names = [n for n in names if "flash" in n and not n.endswith("-latest")
+             and n not in _retired_models
+             and not any(w in n for w in _SKIP_MODEL_WORDS)]
+    return sorted(names, key=_version_key, reverse=True)
+
+
 def gemini_model():
-    return os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+    """GEMINI_MODEL if set, else the newest Flash model the key can use."""
+    global _resolved_model
+    if os.environ.get("GEMINI_MODEL"):
+        return os.environ["GEMINI_MODEL"]
+    if not _resolved_model:
+        try:
+            _resolved_model = (list_flash_models() or [GEMINI_FALLBACK_MODEL])[0]
+        except Exception as e:
+            log.warning("Listing Gemini models failed: %s", e)
+            return GEMINI_FALLBACK_MODEL
+    return _resolved_model
 
 
 def _gemini_json(prompt, schema):
     """POST a prompt to Gemini and return the parsed JSON reply, or None.
 
-    Retries once on 429/5xx; every failure is logged (never the key) and
+    Retries once on 429/5xx, on a retired model (404, picks another) and
+    when the model rejects the thinking budget; every failure is logged (never the key) and
     remembered in last_llm_error."""
-    global last_llm_error
+    global last_llm_error, _resolved_model
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         last_llm_error = "GEMINI_API_KEY is not set"
         return None
-    body = json.dumps({
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"responseMimeType": "application/json",
-                             "responseSchema": schema,
-                             "thinkingConfig": {"thinkingBudget": 0}},
-    }).encode()
+    config = {"responseMimeType": "application/json", "responseSchema": schema,
+              "thinkingConfig": {"thinkingBudget": 0}}
     for attempt in (1, 2):
+        body = json.dumps({"contents": [{"parts": [{"text": prompt}]}],
+                           "generationConfig": config}).encode()
         req = urllib.request.Request(
             GEMINI_URL.format(model=gemini_model()), data=body,
             headers={"Content-Type": "application/json", "x-goog-api-key": api_key})
@@ -168,15 +206,32 @@ def _gemini_json(prompt, schema):
             last_llm_error = None
             return json.loads(text)
         except urllib.error.HTTPError as e:
-            detail = e.read().decode("utf-8", "replace")[:300]
-            last_llm_error = f"HTTP {e.code}: {detail}"
-            if attempt == 1 and (e.code == 429 or e.code >= 500):
-                time.sleep(2)
-                continue
+            detail = e.read().decode("utf-8", "replace")[:1000]
+            last_llm_error = f"HTTP {e.code}: {api_error_message(detail)}"
+            if attempt == 1:
+                if e.code == 429 or e.code >= 500:
+                    time.sleep(2)
+                    continue
+                if e.code == 404 and not os.environ.get("GEMINI_MODEL"):
+                    _retired_models.add(gemini_model())   # retired: pick another
+                    _resolved_model = None
+                    continue
+                if e.code == 400 and "thinking" in detail.lower():
+                    config.pop("thinkingConfig")   # model doesn't take a budget
+                    continue
         except Exception as e:
             last_llm_error = f"{type(e).__name__}: {e}"
         log.warning("Gemini call failed: %s", last_llm_error)
         return None
+
+
+def api_error_message(detail):
+    """The 'message' of a Google API error body, falling back to the raw text."""
+    try:
+        msg = json.loads(detail)["error"]["message"]
+    except Exception:
+        msg = detail
+    return " ".join(str(msg).split())[:300]
 
 
 def _category_enum(categories):

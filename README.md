@@ -44,7 +44,7 @@ entries can be re-read later).
 | `APP_PASSWORD` | yes | Password for logging into the app in a browser |
 | `SHORTCUT_SECRET` | yes | A separate password only your Shortcut knows, for `/upload-from-shortcut` |
 | `GEMINI_API_KEY` | recommended | Free key from [aistudio.google.com/apikey](https://aistudio.google.com/apikey). Reads receipts the regex parsers can't and categorises unknown merchants |
-| `GEMINI_MODEL` | no | Defaults to `gemini-2.5-flash` |
+| `GEMINI_MODEL` | no | Pin a model; by default the app picks the newest Flash model your key can use |
 
 The first five are **required** — this app is personal, not public. Without
 `APP_USERNAME`/`APP_PASSWORD` set, every page refuses to load; without

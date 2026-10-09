@@ -8,11 +8,16 @@
     <div class="tx-list" style="box-shadow:none;">
         <div class="tx"><div class="main"><p class="name">API key</p><p class="meta">GEMINI_API_KEY on Render</p></div>
             <span class="amt" style="color:{{ 'var(--good)' if key_set else 'var(--critical)' }}">{{ '✓ Set' if key_set else '✗ Missing' }}</span></div>
-        <div class="tx"><div class="main"><p class="name">Model</p><p class="meta">GEMINI_MODEL (optional)</p></div>
+        <div class="tx"><div class="main"><p class="name">Model</p><p class="meta">{{ 'Pinned by GEMINI_MODEL' if model_pinned else 'Auto: newest Flash your key can use' }}</p></div>
             <span class="amt">{{ model }}</span></div>
         <div class="tx"><div class="main"><p class="name">Learned merchants</p><p class="meta">Rules from your edits + AI results</p></div>
             <span class="amt">{{ rule_count if rule_count is not none else 'table missing' }}</span></div>
     </div>
+    {% if available %}
+    <p style="font-size:12.5px; color:var(--ink-2); line-height:1.5; margin-top:10px;">
+        Available Flash models: {{ available | join(', ') }}
+    </p>
+    {% endif %}
     {% if last_error and not test %}
     <div class="msg-error" style="margin:12px 0 0;">Last AI error: {{ last_error }}</div>
     {% endif %}
