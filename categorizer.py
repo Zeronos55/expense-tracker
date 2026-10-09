@@ -23,12 +23,20 @@ import urllib.request
 UNCATEGORIZED = "Uncategorized"
 FUZZY_THRESHOLD = 0.85
 
-# Receipt field labels the regex parsers sometimes grab instead of a payee.
-LABEL_BLOCKLIST = {"NOT FOUND", "WALLET", "EWALLET", "E WALLET", "TRANSACTION TYPE",
-                   "TRANSACTION", "REFERENCE NO", "REFERENCE", "REF NO", "EMAIL",
-                   "LEAD", "PAYMENT DETAILS", "DETAILS", "STATUS", "SUCCESSFUL",
-                   "DUITNOW QR", "DUITNOW", "AMOUNT", "TOTAL", "DATE", "MERCHANT",
-                   "RECIPIENT", "PAY TO", "TO", "FROM", "TNG", "ACCOUNT"}
+# Field names printed on receipts ("Merchant", "Wallet", ...). OCR often
+# returns these instead of the payee, so they are never a merchant.
+FIELD_LABELS = {"WALLET", "TRANSACTION TYPE", "TRANSACTION", "REFERENCE NO",
+                "REFERENCE", "REF NO", "EMAIL", "PAYMENT DETAILS", "DETAILS",
+                "STATUS", "AMOUNT", "TOTAL", "DATE", "MERCHANT", "RECIPIENT",
+                "PAY TO", "TO", "FROM", "ACCOUNT", "DATE TIME", "TIME",
+                "TRANSACTION NO", "TRANSACTION DATE", "TRANSACTION ID",
+                "PAYMENT METHOD", "PAID FROM", "PAID WITH", "PAYMENT TYPE",
+                "TRANSFER TO", "MERCHANT NAME", "RECIPIENT NAME",
+                "RECIPIENT REFERENCE", "BENEFICIARY", "BENEFICIARY NAME",
+                "TOTAL AMOUNT", "REMARKS", "REFERENCE ID"}
+# Plus values that are never a payee either.
+LABEL_BLOCKLIST = FIELD_LABELS | {"NOT FOUND", "EWALLET", "E WALLET", "LEAD",
+                                  "SUCCESSFUL", "DUITNOW QR", "DUITNOW", "TNG"}
 
 # Tokens that carry no merchant identity.
 NOISE_TOKENS = {"SDN", "BHD", "BERHAD", "SB", "ENTERPRISE", "ENT", "TRADING",
@@ -97,14 +105,58 @@ def normalize_merchant(raw):
     return key, key.title() if raw.isupper() or raw.islower() else " ".join(raw.split())
 
 
+def _label_key(value):
+    return " ".join(re.sub(r"[^A-Z0-9 ]", " ", (value or "").upper()).split())
+
+
+def is_field_label(line):
+    return _label_key(line) in FIELD_LABELS
+
+
 def is_label(recipient):
     """True if the 'recipient' is really a receipt field label / junk."""
     if not recipient or not recipient.strip():
         return True
-    s = re.sub(r"[^A-Z0-9 ]", " ", recipient.upper())
-    s = " ".join(s.split())
+    s = _label_key(recipient)
     return (not s or s in LABEL_BLOCKLIST or bool(re.fullmatch(r"RM\s*[\d.]+.*", s))
             or not re.search(r"[A-Z]", s))
+
+
+def field_value(text, labels):
+    """Value of the first field in `labels` (e.g. "Merchant") on an OCR'd receipt.
+
+    Handles both layouts iOS OCR produces:
+      same line   "Merchant HEXTAR LUCKIN"
+      next line   "Merchant" / "HEXTAR LUCKIN"
+      columns     "Transaction Type" / "Merchant" / "Wallet" / "DuitNow QR" /
+                  "HEXTAR LUCKIN" / "eWallet Balance"  (labels first, values after)
+    In the column layout the value sits at the label's position in the block of
+    values that follows, not on the next line. Returns None if nothing usable."""
+    lines = [l.strip() for l in (text or "").splitlines() if l.strip()]
+    for label in labels:
+        rx = re.compile(r"%s\b[\s:.\-]*(.*)$" % re.escape(label), re.IGNORECASE)
+        for i, line in enumerate(lines):
+            m = rx.match(line)
+            if not m:
+                continue
+            if not is_field_label(line):        # "Merchant HEXTAR LUCKIN"
+                rest = m.group(1).strip()
+                if not is_label(rest):
+                    return rest
+                continue
+            if _label_key(line) != _label_key(label):
+                continue                        # "Merchant Name": another label
+            start = i
+            while start > 0 and is_field_label(lines[start - 1]):
+                start -= 1
+            end = i
+            while end + 1 < len(lines) and is_field_label(lines[end + 1]):
+                end += 1
+            values = lines[end + 1:]
+            k = i - start if end > start else 0
+            if k < len(values) and not is_label(values[k]):
+                return values[k]
+    return None
 
 
 def alias_key(name):

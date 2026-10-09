@@ -72,15 +72,19 @@ the server only ever receives already-extracted text, never an image.
    - Request Body: **Form**
      - Field `text`, value = the *Extracted Text* variable from step 2
      - Field `secret`, value = your `SHORTCUT_SECRET`
-4. (Optional) Add **Show Notification**, with the "Get Contents of URL" result
-   as the text, so you get an instant confirmation of what was parsed.
+4. (Optional) Add **Get Dictionary Value** → key `message` from the "Get
+   Contents of URL" result, then **Show Notification** with that value. You
+   get e.g. `✓ RM 12.90 · Luckin Coffee · Food & Dining`, or a warning telling
+   you which field couldn't be read.
 5. Rename the shortcut (e.g. "Log Receipt"), tap the settings icon, and turn
    on **Show in Share Sheet**, restricted to Images.
 6. To use it: screenshot a bank/e-wallet payment confirmation → tap Share →
    pick "Log Receipt". It appears in the app within a few seconds.
 
 The endpoint responds with the parsed `date`, `recipient`, `amount`,
-`category` and `source` as JSON so step 4's notification can show them.
+`category`, `source` and a one-line `message` as JSON. If it can find neither
+an amount nor a payee (wrong screenshot), it saves nothing and returns an
+error message instead of a "Not found" entry.
 Whatever comes out imperfect (OCR/parsing isn't always exact) can be fixed
 afterwards in the app under **History** → tap the entry → edit.
 
@@ -100,9 +104,11 @@ python app.py
 
 Each Shortcut upload goes through:
 
-1. **Regex parsers** per banking app pull out date, payee and amount.
-   Payees that are really field labels ("Wallet", "Transaction Type",
-   "Reference No", …) are thrown away.
+1. **Parsers** per banking app pull out date, payee and amount. The payee is
+   read from the field after "Merchant", "Recipient Name", "Pay To", … It
+   copes with iOS OCR listing all the labels first and all the values after
+   them, so it no longer saves "Wallet" or "Transaction Type" as the payee.
+   Anything that is still a field label is thrown away.
 2. **Learned rules** (your past edits, exact or fuzzy match), then **keyword
    rules**, pick the category.
 3. If the payee, amount or date is missing, or the category is still unknown, the
