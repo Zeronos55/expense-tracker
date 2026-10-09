@@ -5,7 +5,7 @@ from datetime import datetime, date as date_cls, timedelta
 from collections import defaultdict, Counter
 from urllib.parse import urlparse
 import categorizer
-from categorizer import (classify, normalize_merchant, is_label,
+from categorizer import (classify, normalize_merchant, is_label, field_value,
                          llm_parse_receipt, UNCATEGORIZED)
 
 logging.basicConfig(level=logging.INFO,
@@ -88,6 +88,11 @@ app.jinja_env.filters["rm"] = lambda v: f"{float(v or 0):,.2f}"
 # OCR & PARSERS (same logic as receipt_reader.py)
 # ══════════════════════════════════════════════════════════
 
+# Field names a payee follows, most specific first. A label must start its
+# line (so "sent to email" or "LEAD" from body text is never a payee).
+PAYEE_LABELS = ["Merchant", "Merchant Name", "Pay To", "Paid To", "Recipient",
+                "Recipient Name", "Beneficiary Name", "Beneficiary", "Transfer To", "To"]
+
 def detect_source(text):
     t = text.upper()
     if 'TNGD' in t or ('TNG' in t and 'DUITNOW QR' in t): return 'TNG'
@@ -122,12 +127,7 @@ def parse_tng(text):
     amount = None
     m = re.search(r'-?RM\s*(\d+\.?\d*)', text, re.IGNORECASE)
     if m: amount = float(m.group(1))
-    recipient = None
-    m = re.search(r'Merchant\s+(.+?)(?:\n|Payment|$)', text, re.IGNORECASE)
-    if m: recipient = m.group(1).strip()
-    if not recipient:
-        m = re.search(r'Pay\s+To\s+(.+?)(?:\n|$)', text, re.IGNORECASE)
-        if m: recipient = m.group(1).strip()
+    recipient = field_value(text, PAYEE_LABELS)
     date = None
     m = re.search(r'(\d{2}/\d{2}/\d{4})', text)
     if m: date = m.group(1)
@@ -140,9 +140,7 @@ def parse_shopee(text):
                     r'-(\d+\.\d{2})']:
         m = re.search(pattern, text)
         if m: amount = float(m.group(1)); break
-    recipient = None
-    m = re.search(r'Pay\s+To\s+\n?\s*(.+?)(?:\n|Order|$)', text, re.IGNORECASE)
-    if m: recipient = m.group(1).strip()
+    recipient = field_value(text, PAYEE_LABELS)
     if not recipient:
         m = re.search(r'(Shopee\s+\w+)', text, re.IGNORECASE)
         if m: recipient = m.group(1).strip()
@@ -166,11 +164,10 @@ def parse_generic(text):
                     r'(\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\w*\s+\d{4})']:
         m = re.search(pattern, text, re.IGNORECASE)
         if m: date = m.group(1); break
-    recipient = None
-    for pattern in [r'(?:To|Recipient|Merchant|Pay To)[:\s]+([A-Za-z0-9][A-Za-z0-9\s\-&]+)',
-                    r'SALE\s+([A-Z0-9][A-Z0-9\s\-&]+?)(?:\n|$)']:
-        m = re.search(pattern, text, re.IGNORECASE)
-        if m: recipient = m.group(1).strip().splitlines()[0]; break
+    recipient = field_value(text, PAYEE_LABELS)
+    if not recipient:
+        m = re.search(r'SALE[ \t]+([A-Z0-9][A-Z0-9 \t\-&]+?)[ \t]*(?:\n|$)', text, re.IGNORECASE)
+        if m: recipient = m.group(1).strip()
     return date, recipient, amount
 
 PARSER_REGISTRY = {
@@ -562,6 +559,16 @@ def add():
 
 SHORTCUT_SECRET = os.environ.get("SHORTCUT_SECRET")
 
+def shortcut_message(p):
+    """One line for the Shortcut's notification."""
+    amount = f"RM {p['amount']:.2f}" if p["amount"] else "no amount"
+    if not p["recipient"] or not p["amount"] or not p["date"]:
+        missing = [n for n, v in (("merchant", p["recipient"]), ("amount", p["amount"]),
+                                  ("date", p["date"])) if not v]
+        return (f"Saved {amount}, but couldn't read the {' or '.join(missing)}. "
+                "Fix it in History → Needs review.")
+    return f"✓ {amount} · {p['recipient']} · {p['category']}"
+
 @app.route("/upload-from-shortcut", methods=["POST"])
 def upload_from_shortcut():
     if not SHORTCUT_SECRET:
@@ -582,6 +589,10 @@ def upload_from_shortcut():
 
         p = parse_receipt(text, merchant_rules())
         details = request.form.get("details", "").strip()
+        if not p["amount"] and not p["recipient"]:
+            # nothing readable (wrong screenshot, blank OCR): don't save junk
+            return jsonify({"status": "error", **p,
+                            "message": "Couldn't find a payment in this image. Nothing was saved."}), 422
 
         db_insert(
             p["date"]      or "Not found",
@@ -590,7 +601,7 @@ def upload_from_shortcut():
             p["category"], p["source"], file_label, details, raw_text=text
         )
 
-        return jsonify({"status": "success", **p})
+        return jsonify({"status": "success", **p, "message": shortcut_message(p)})
 
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
