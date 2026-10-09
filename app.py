@@ -655,9 +655,15 @@ def ai_status():
         rule_count = len(supabase.table("merchant_rules").select("merchant_key").execute().data or [])
     except Exception:
         rule_count = None
+    try:
+        available = categorizer.list_flash_models()
+    except Exception as e:
+        available, categorizer.last_llm_error = [], f"Listing models failed: {e}"
     return render_template("ai_status.html",
                            key_set=bool(os.environ.get("GEMINI_API_KEY")),
                            model=categorizer.gemini_model(),
+                           model_pinned=bool(os.environ.get("GEMINI_MODEL")),
+                           available=available,
                            last_error=categorizer.last_llm_error,
                            rule_count=rule_count, sample=SAMPLE_RECEIPT, test=test)
 
@@ -696,7 +702,7 @@ def recategorise():
     left = len(rows) - fixed
     msg = f"Categorised {fixed} of {len(rows)} entries."
     if categorizer.last_llm_error:
-        msg += f" AI error: {categorizer.last_llm_error[:120]}"
+        msg += f" AI error: {categorizer.last_llm_error}"
     elif stopped_early:
         msg += " Tap again to continue."
     elif left:

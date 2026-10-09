@@ -17,5 +17,5 @@ services:
         sync: false
       - key: GEMINI_API_KEY   # recommended: free-tier Gemini reads receipts + categorises
         sync: false
-      - key: GEMINI_MODEL     # optional, defaults to gemini-2.5-flash
+      - key: GEMINI_MODEL     # optional; auto-picks the newest Flash model if unset
         sync: false
