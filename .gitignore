@@ -9,3 +9,6 @@ dist/
 
 # App data (personal, not code)
 expenses.xlsx
+
+# Node
+node_modules/
