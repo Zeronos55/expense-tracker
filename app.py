@@ -6,7 +6,8 @@ from collections import defaultdict, Counter
 from urllib.parse import urlparse
 import categorizer
 from categorizer import (classify, normalize_merchant, is_label, field_value,
-                         llm_parse_receipt, UNCATEGORIZED)
+                         llm_parse_receipt, keyword_category, suggest_keywords,
+                         UNCATEGORIZED)
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -207,8 +208,51 @@ def save_merchant_rule(recipient, category, source, merchant=None):
             "merchant_key": key, "merchant": merchant or display,
             "category": category, "source": source,
             "updated_at": datetime.utcnow().isoformat()}).execute()
+    except Exception as e:
+        # learning is best-effort; never block saving an expense
+        logging.warning("Saving merchant rule %r failed: %s", key, e)
+
+def keyword_rule_rows():
+    """All learned-keyword rows; [] until supabase_add_keyword_rules.sql has been run."""
+    try:
+        return supabase.table("keyword_rules").select("*").execute().data or []
     except Exception:
-        pass  # learning is best-effort; never block saving an expense
+        return []
+
+def approved_keywords():
+    """[(category, keyword)] you approved on /rules; applied after the built-in keywords."""
+    return [(r["category"], r["keyword"]) for r in keyword_rule_rows()
+            if r.get("status") == "approved"]
+
+def save_keyword_suggestion(keyword, category, example, source="llm"):
+    """Remember a suggested keyword unless it is already known (any status) or
+    the built-in rules already cover it. It only applies once approved on /rules."""
+    keyword = (keyword or "").upper()
+    if not keyword or not category or category == UNCATEGORIZED:
+        return
+    if keyword_category(keyword) == category:
+        return
+    try:
+        if supabase.table("keyword_rules").select("keyword").eq("keyword", keyword).execute().data:
+            return
+        supabase.table("keyword_rules").insert({
+            "keyword": keyword, "category": category, "status": "suggested",
+            "source": source, "example_merchant": example}).execute()
+    except Exception as e:
+        logging.warning("Saving keyword suggestion %r failed: %s", keyword, e)
+
+def apply_rules_to_uncategorised():
+    """Categorise Uncategorized entries from the learned rules and approved
+    keywords (no network). Returns how many entries were updated."""
+    rules, keywords, fixed = merchant_rules(), approved_keywords(), 0
+    for r in db_get_all():
+        if (r.get("category") or UNCATEGORIZED) != UNCATEGORIZED or is_label(r.get("recipient")):
+            continue
+        category = classify(r["recipient"], rules, extra_keywords=keywords)["category"]
+        if category != UNCATEGORIZED:
+            db_update(r["id"], "category", category)
+            fixed += 1
+    return fixed
 
 def known_sources():
     """Banking app / source values the user has actually used, most-used first."""
@@ -220,15 +264,16 @@ def known_sources():
         counts[source_label(raw)] += 1
     return sorted(counts, key=lambda s: counts[s], reverse=True)
 
-def parse_receipt(text, rules=None):
+def parse_receipt(text, rules=None, extra_keywords=None):
     """Regex parsers first; Gemini reads the whole text when they miss.
 
+    extra_keywords: approved learned keywords, see approved_keywords().
     Returns dict(date, recipient, amount, category, source, method)."""
     source = detect_source(text)
     date, recipient, amount = PARSER_REGISTRY[source](text)
     if is_label(recipient):
         recipient = None  # "Wallet", "Transaction Type", ... are labels, not payees
-    result = classify(recipient, rules, PRESET_CATEGORIES)
+    result = classify(recipient, rules, PRESET_CATEGORIES, extra_keywords=extra_keywords)
     category, method = result["category"], result["method"]
 
     if not recipient or not amount or not date or category == UNCATEGORIZED:
@@ -239,7 +284,8 @@ def parse_receipt(text, rules=None):
             date = date or ai["date"]
             if category == UNCATEGORIZED and recipient:
                 # a learned rule for the AI-found merchant still beats the AI
-                again = classify(recipient, rules, PRESET_CATEGORIES)
+                again = classify(recipient, rules, PRESET_CATEGORIES,
+                                 extra_keywords=extra_keywords)
                 category, method = again["category"], again["method"]
             if category == UNCATEGORIZED and ai["category"] != UNCATEGORIZED:
                 category, method = ai["category"], "llm"
@@ -488,6 +534,7 @@ def index():
     has_prev = any(m <= prev_m for m in months)
     has_next = next_m <= (today.year, today.month)
     return render_template("index.html", view=view, has_data=bool(months),
+                           rules_pending=rules_pending_count(),
                            prev_link=f"{prev_m[0]}-{prev_m[1]:02d}" if has_prev else None,
                            next_link=f"{next_m[0]}-{next_m[1]:02d}" if has_next else None)
 
@@ -567,7 +614,10 @@ def shortcut_message(p):
                                   ("date", p["date"])) if not v]
         return (f"Saved {amount}, but couldn't read the {' or '.join(missing)}. "
                 "Fix it in History → Needs review.")
-    return f"✓ {amount} · {p['recipient']} · {p['category']}"
+    line = f"✓ {amount} · {p['recipient']} · {p['category']}"
+    if p.get("ai_error"):
+        line += f" (AI unavailable: {p['ai_error'][:80]})"
+    return line
 
 @app.route("/upload-from-shortcut", methods=["POST"])
 def upload_from_shortcut():
@@ -587,7 +637,12 @@ def upload_from_shortcut():
         if not text:
             return jsonify({"status": "error", "message": "No text received"}), 400
 
-        p = parse_receipt(text, merchant_rules())
+        p = parse_receipt(text, merchant_rules(), approved_keywords())
+        # Uncategorized with a real merchant means Gemini was asked: say why it
+        # couldn't help rather than saving silently (last_llm_error is None when
+        # Gemini answered but wasn't sure).
+        p["ai_error"] = (categorizer.last_llm_error
+                         if p["recipient"] and p["category"] == UNCATEGORIZED else None)
         details = request.form.get("details", "").strip()
         if not p["amount"] and not p["recipient"]:
             # nothing readable (wrong screenshot, blank OCR): don't save junk
@@ -689,21 +744,24 @@ def recategorise():
             and (not is_label(r.get("recipient")) or r.get("raw_text"))]
     categorizer.last_llm_error = None
     rules, done, fixed, started = merchant_rules(), {}, 0, time.time()
+    keywords = approved_keywords()
     stopped_early = False
     for r in rows:
         if time.time() - started > RECATEGORISE_BUDGET_S:
             stopped_early = True
             break
         if r.get("raw_text") and is_label(r.get("recipient")):
-            p = parse_receipt(r["raw_text"], rules)
+            p = parse_receipt(r["raw_text"], rules, keywords)
             updates = {k: v for k, v in (("recipient", p["recipient"]), ("amount", p["amount"]),
                                          ("date", p["date"]), ("category", p["category"])) if v}
         else:
             key = normalize_merchant(r["recipient"])[0]
             if key not in done:
-                res = classify(r["recipient"], rules, PRESET_CATEGORIES, use_llm=True)
+                res = classify(r["recipient"], rules, PRESET_CATEGORIES, use_llm=True,
+                               extra_keywords=keywords)
                 if res["method"] == "llm":
                     save_merchant_rule(r["recipient"], res["category"], "llm", res["merchant"])
+                    save_keyword_suggestion(res["keyword"], res["category"], res["merchant"])
                     rules[key] = {"merchant": res["merchant"], "category": res["category"]}
                 done[key] = res["category"]
             updates = {"category": done[key]}
@@ -719,6 +777,98 @@ def recategorise():
     elif left:
         msg += f" {left} still need a manual pick."
     return redirect(url_for("transactions", review=1, msg=msg))
+
+# ── Learned knowledge: weekly review ─────────────────────
+# Merchant rules apply as soon as they are saved; an AI-learned one (source
+# 'llm') stays on this page until you confirm it (source -> 'user', which also
+# makes it outrank any later AI guess). Keywords generalise across merchants,
+# so they only apply once approved here.
+
+def rules_pending_count():
+    """AI-learned merchant rules and stored keyword suggestions awaiting review."""
+    try:
+        saved = supabase.table("merchant_rules").select("merchant_key,source").execute().data or []
+    except Exception:
+        saved = []
+    return (sum(1 for r in saved if r.get("source") != "user")
+            + sum(1 for r in keyword_rule_rows() if r.get("status") == "suggested"))
+
+@app.route("/rules")
+def rules_page():
+    try:
+        saved = (supabase.table("merchant_rules").select("*")
+                 .order("updated_at", desc=True).execute().data or [])
+    except Exception:
+        saved = []
+    kw_rows = keyword_rule_rows()
+    # keywords mined from your own categories need no AI and are never stored
+    # until you decide on them; skip anything already decided or suggested
+    mined = suggest_keywords({k: v["category"] for k, v in merchant_rules().items()},
+                             skip={r["keyword"] for r in kw_rows})
+    suggestions = ([{"keyword": r["keyword"], "category": r["category"],
+                     "examples": [r["example_merchant"]] if r.get("example_merchant") else [],
+                     "source": "AI"} for r in kw_rows if r.get("status") == "suggested"]
+                   + [{**s, "source": f"{s['support']} merchants"} for s in mined])
+    stuck = [r for r in db_get_all()
+             if (r.get("category") or UNCATEGORIZED) == UNCATEGORIZED]
+    return render_template(
+        "rules.html",
+        pending=[r for r in saved if r.get("source") != "user"],
+        confirmed=[r for r in saved if r.get("source") == "user"],
+        suggestions=suggestions,
+        approved=[r for r in kw_rows if r.get("status") == "approved"],
+        stuck=stuck,
+        categories=PRESET_CATEGORIES,
+        message=request.args.get("msg"))
+
+def _rules_done(msg):
+    fixed = apply_rules_to_uncategorised()
+    if fixed:
+        msg += f" {fixed} uncategorised entr{'y' if fixed == 1 else 'ies'} updated."
+    return redirect(url_for("rules_page", msg=msg))
+
+@app.route("/rules/merchant", methods=["POST"])
+def rules_merchant():
+    key = request.form.get("key", "").strip()
+    action = request.form.get("action")
+    category = request.form.get("category", "").strip()
+    if not key or action not in ("save", "delete") or (action == "save" and not category):
+        return redirect(url_for("rules_page", msg="Nothing changed."))
+    try:
+        if action == "delete":
+            supabase.table("merchant_rules").delete().eq("merchant_key", key).execute()
+            return redirect(url_for("rules_page", msg=f"Forgot {key.title()}."))
+        supabase.table("merchant_rules").upsert({
+            "merchant_key": key, "category": category, "source": "user",
+            "updated_at": datetime.utcnow().isoformat()}).execute()
+    except Exception as e:
+        logging.warning("Updating merchant rule %r failed: %s", key, e)
+        return redirect(url_for("rules_page", msg=f"Couldn't save that rule: {e}"))
+    return _rules_done(f"Saved {key.title()} → {category}.")
+
+@app.route("/rules/keyword", methods=["POST"])
+def rules_keyword():
+    keyword = request.form.get("keyword", "").strip().upper()
+    action = request.form.get("action")
+    category = request.form.get("category", "").strip()
+    if not keyword or action not in ("approve", "reject", "remove"):
+        return redirect(url_for("rules_page", msg="Nothing changed."))
+    try:
+        table = supabase.table("keyword_rules")
+        if action == "remove":
+            table.delete().eq("keyword", keyword).execute()
+            return redirect(url_for("rules_page", msg=f"Removed keyword {keyword}."))
+        table.upsert({"keyword": keyword, "category": category or UNCATEGORIZED,
+                      "status": "approved" if action == "approve" else "rejected",
+                      "updated_at": datetime.utcnow().isoformat()}).execute()
+    except Exception as e:
+        logging.warning("Updating keyword rule %r failed: %s", keyword, e)
+        return redirect(url_for("rules_page", msg=(
+            "Couldn't save that keyword - run supabase_add_keyword_rules.sql in Supabase first. "
+            f"({e})")))
+    if action == "reject":
+        return redirect(url_for("rules_page", msg=f"Won't suggest {keyword} again."))
+    return _rules_done(f"Approved {keyword} → {category}.")
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))

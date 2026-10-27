@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block title %}Rules{% endblock %}
+{% block subtitle %}<p class="sub">What the app has learned — review it weekly</p>{% endblock %}
+
+{% block head %}
+<style>
+    .rule { padding: 12px 0; }
+    .rule + .rule { border-top: 1px solid var(--border); }
+    .rule .name { font-weight: 700; font-size: 15px; }
+    .rule .meta { font-size: 12.5px; color: var(--ink-muted); margin: 2px 0 8px; }
+    .rule .row { display: flex; gap: 8px; align-items: center; }
+    .rule select { margin: 0; padding: 9px 30px 9px 12px; font-size: 14px; border-radius: 10px; flex: 1; min-width: 0; }
+    .rule form { margin: 0; display: contents; }
+    .mini { width: auto; margin: 0; padding: 9px 13px; border-radius: 10px; font-size: 13.5px; white-space: nowrap; }
+    .hint { font-size: 13px; color: var(--ink-2); line-height: 1.45; margin-bottom: 6px; }
+    .kw { font-weight: 800; letter-spacing: .02em; }
+    details summary { cursor: pointer; font-weight: 700; font-size: 14px; }
+</style>
+{% endblock %}
+
+{% macro picker(current) %}
+<select name="category" aria-label="Category">
+    {% for c in categories %}<option value="{{ c }}" {{ 'selected' if c == current }}>{{ c | category_icon }} {{ c }}</option>{% endfor %}
+    {% if current and current not in categories %}<option value="{{ current }}" selected>{{ current }}</option>{% endif %}
+</select>
+{% endmacro %}
+
+{% macro merchant_row(r, confirm_label) %}
+<div class="rule">
+    <p class="name">{{ r.merchant or r.merchant_key | title }}</p>
+    <p class="meta">{{ r.merchant_key }}{% if r.source == 'llm' %} · guessed by AI{% endif %}</p>
+    <div class="row">
+        <form method="post" action="/rules/merchant">
+            <input type="hidden" name="key" value="{{ r.merchant_key }}">
+            {{ picker(r.category) }}
+            <button class="btn btn-primary mini" name="action" value="save">{{ confirm_label }}</button>
+            <button class="btn btn-danger mini" name="action" value="delete" aria-label="Forget {{ r.merchant_key }}">✕</button>
+        </form>
+    </div>
+</div>
+{% endmacro %}
+
+{% block content %}
+{% if message %}<div class="msg-info">{{ message }}</div>{% endif %}
+
+<div class="card">
+    <p class="card-title">Learned by AI — confirm or fix <small>{{ pending|length }}</small></p>
+    {% if pending %}
+    <p class="hint">These already apply to new receipts. Confirming locks one in, so a later AI guess can't override it.</p>
+    {% for r in pending %}{{ merchant_row(r, 'Confirm') }}{% endfor %}
+    {% else %}
+    <p class="hint">Nothing waiting. 🎉</p>
+    {% endif %}
+</div>
+
+<div class="card">
+    <p class="card-title">Suggested keywords <small>{{ suggestions|length }}</small></p>
+    <p class="hint">A keyword categorises every merchant containing that word, so these only apply once you approve them.</p>
+    {% for s in suggestions %}
+    <div class="rule">
+        <p class="name"><span class="kw">{{ s.keyword }}</span> → {{ s.category | category_icon }} {{ s.category }}</p>
+        <p class="meta">from {{ s.source }}{% if s.examples %} · e.g. {{ s.examples | join(', ') | lower }}{% endif %}</p>
+        <div class="row">
+            <form method="post" action="/rules/keyword">
+                <input type="hidden" name="keyword" value="{{ s.keyword }}">
+                {{ picker(s.category) }}
+                <button class="btn btn-primary mini" name="action" value="approve">Approve</button>
+                <button class="btn btn-danger mini" name="action" value="reject">Reject</button>
+            </form>
+        </div>
+    </div>
+    {% else %}
+    <p class="hint">No suggestions yet. They appear once a word shows up in 3+ merchants you've categorised the same way.</p>
+    {% endfor %}
+</div>
+
+{% if stuck %}
+<div class="card">
+    <p class="card-title">Still uncategorised <small>{{ stuck|length }}</small></p>
+    <p class="hint">Fixing one by hand teaches the app that merchant.</p>
+    <div class="tx-list" style="box-shadow:none; border:none; border-radius:0;">
+        {% for row in stuck %}
+        <a class="tx" href="/edit/{{ row.id }}" style="padding-left:0; padding-right:0;">
+            <div class="main">
+                <p class="name">{{ row.recipient | display_name }}</p>
+                <p class="meta">{{ row.date }}</p>
+            </div>
+            <span class="amt num">RM {{ row.amount | rm }}</span>
+        </a>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+<div class="card">
+    <details>
+        <summary>Everything it knows ({{ confirmed|length }} merchant{{ 's' if confirmed|length != 1 }} · {{ approved|length }} keyword{{ 's' if approved|length != 1 }})</summary>
+        <div style="margin-top:8px;">
+            {% for r in approved %}
+            <div class="rule">
+                <p class="name"><span class="kw">{{ r.keyword }}</span> → {{ r.category | category_icon }} {{ r.category }}</p>
+                <div class="row" style="margin-top:6px;">
+                    <form method="post" action="/rules/keyword">
+                        <input type="hidden" name="keyword" value="{{ r.keyword }}">
+                        <button class="btn btn-danger mini" name="action" value="remove">Remove</button>
+                    </form>
+                </div>
+            </div>
+            {% endfor %}
+            {% for r in confirmed %}{{ merchant_row(r, 'Save') }}{% endfor %}
+            {% if not approved and not confirmed %}<p class="hint">Nothing confirmed yet.</p>{% endif %}
+        </div>
+    </details>
+</div>
+{% endblock %}

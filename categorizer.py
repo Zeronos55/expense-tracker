@@ -6,17 +6,24 @@ Cascade (first hit wins):
   1. learned rule, exact    (rules[merchant_key])
   2. learned rule, fuzzy    (similar merchant seen before)
   3. keyword rules          (word-boundary, ordered)
-  4. Gemini free tier       (only when use_llm and GEMINI_API_KEY is set)
+  4. approved keywords      (extra_keywords: learned words you approved on /rules)
+  5. Gemini free tier       (only when use_llm and GEMINI_API_KEY is set)
      app.py additionally sends the whole OCR text to llm_parse_receipt when
      the regex parsers miss the payee/amount/date.
-  5. "Uncategorized"
+  6. "Uncategorized"
+
+Learning loop: merchant rules apply as soon as they are saved; generalising
+keywords (suggest_keywords, or a word Gemini points out) are only suggestions
+until approved, so one wrong guess can't miscategorise a whole class of shops.
 """
 import difflib
+import functools
 import json
 import logging
 import os
 import re
 import time
+from collections import Counter
 import urllib.error
 import urllib.request
 
@@ -59,13 +66,17 @@ KEYWORD_RULES = [
     ("Food & Dining", ["GRABFOOD", "FOODPANDA", "MAMAK", "MCDONALD", "MCD",
                        "KFC", "SUBWAY", "STARBUCKS", "TEALIVE", "CHATIME",
                        "RESTAURANT", "RESTORAN", "KEDAI MAKAN", "JUICE",
-                       "CAFE", "BAKERY", "PIZZA", "BURGER", "COFFEE"]),
+                       "CAFE", "BAKERY", "PIZZA", "BURGER", "COFFEE",
+                       "CATERING", "CHICKEN", "ROAST", "NOODLE", "NASI",
+                       "KOPITIAM", "BISTRO", "DESSERT", "SUSHI", "SATAY",
+                       "FEEDME"]),   # FeedMe is a restaurant POS vendor
     ("Transport", ["MYRAPID", "TOUCHNGO", "TOUCH N GO RELOAD", "PARKING",
                    "TOLL", "GRAB", "GRABCAR", "PETRONAS", "SHELL", "PETRON",
                    "BHP", "CALTEX", "LRT", "MRT", "KTM"]),
     ("Shopping", ["SHOPEE", "LAZADA", "AMAZON", "AEON", "IKEA", "UNIQLO",
                   "ZARA", "GUARDIAN", "WATSONS", "MARKETPLACE", "SPEEDMART",
-                  "MYDIN", "LOTUS", "TESCO", "7 ELEVEN", "7ELEVEN"]),
+                  "MYDIN", "LOTUS", "TESCO", "7 ELEVEN", "7ELEVEN",
+                  "IKANO"]),   # Ikano Handel is the legal entity behind IKEA Malaysia
     ("Entertainment", ["NETFLIX", "SPOTIFY", "STEAM", "YOUTUBE", "DISNEY",
                        "GSC", "TGV"]),
     ("Health & Fitness", ["FITNESS", "GYM", "YOGA", "CLINIC", "KLINIK",
@@ -74,6 +85,7 @@ KEYWORD_RULES = [
                    "CELCOM", "DIGI", "TELEKOM"]),
 ]
 
+@functools.lru_cache(maxsize=None)
 def _compile(kw):
     pat = r"\b" + re.escape(kw).replace(r"\ ", r"\s+")
     if len(kw) <= 4:
@@ -163,12 +175,60 @@ def alias_key(name):
     return re.sub(r"[^A-Z0-9 &]", "", name.upper())
 
 
-def keyword_category(key):
+def keyword_category(key, extra=None):
+    """Category of the first keyword rule matching `key`, else None.
+
+    extra: approved learned keywords as [(category, keyword), ...]; they are
+    only tried after the built-in rules."""
     for category, patterns in _COMPILED_RULES:
         for _kw, rx in patterns:
             if rx.search(key):
                 return category
+    for category, kw in extra or ():
+        if kw and _compile(kw.upper()).search(key):
+            return category
     return None
+
+
+def clean_keyword(word, key):
+    """A usable generalising keyword from `word`, or "".
+
+    Must be a single alphabetic token of the merchant key, long enough to be
+    meaningful, and not noise or a receipt label."""
+    word = (word or "").strip().upper()
+    if (len(word) < 4 or not word.isalpha() or word in NOISE_TOKENS
+            or word in LABEL_BLOCKLIST or word not in (key or "").split()):
+        return ""
+    return word
+
+
+def suggest_keywords(merchants, skip=(), min_support=3, min_share=0.8):
+    """Keywords worth approving, mined from merchants you already categorised.
+
+    merchants: {merchant_key: category}. A word qualifies when it appears in
+    at least `min_support` different merchants and at least `min_share` of
+    them share one category. Words in `skip` (already suggested, approved or
+    rejected) and words the built-in rules already categorise that way are
+    left out. Returns [{keyword, category, support, examples}], best first.
+    Pure Python, so it keeps working while Gemini is down."""
+    skip = {s.upper() for s in skip}
+    seen = {}
+    for key, category in merchants.items():
+        if not key or not category or category == UNCATEGORIZED:
+            continue
+        for tok in set(key.split()):
+            if clean_keyword(tok, key):
+                seen.setdefault(tok, []).append((key, category))
+    out = []
+    for tok, hits in seen.items():
+        if tok in skip or len(hits) < min_support:
+            continue
+        cat, n = Counter(c for _k, c in hits).most_common(1)[0]
+        if n / len(hits) < min_share or keyword_category(tok) == cat:
+            continue
+        out.append({"keyword": tok, "category": cat, "support": n,
+                    "examples": sorted(k for k, c in hits if c == cat)[:3]})
+    return sorted(out, key=lambda s: (-s["support"], s["keyword"]))
 
 
 def _fuzzy_rule(key, rules):
@@ -298,14 +358,18 @@ def llm_classify(raw, categories):
         "Classify this merchant from a Malaysian payment receipt. "
         f"Merchant text: {raw!r}. Return a clean merchant name and the "
         f"best category from: {', '.join(categories)}. If unsure use "
-        f"'{UNCATEGORIZED}'.",
+        f"'{UNCATEGORIZED}'. Also return `keyword`: one word taken from the "
+        "merchant text that signals the category by itself (e.g. CATERING, "
+        "NOODLE), or an empty string if no single word does.",
         {"type": "OBJECT",
          "properties": {"merchant": {"type": "STRING"},
-                        "category": {"type": "STRING", "enum": _category_enum(categories)}},
+                        "category": {"type": "STRING", "enum": _category_enum(categories)},
+                        "keyword": {"type": "STRING"}},
          "required": ["merchant", "category"]})
     if not out or out.get("category") not in categories:
         return None
-    return {"merchant": (out.get("merchant") or "").strip(), "category": out["category"]}
+    return {"merchant": (out.get("merchant") or "").strip(), "category": out["category"],
+            "keyword": clean_keyword(out.get("keyword"), normalize_merchant(raw)[0])}
 
 
 RECEIPT_PROMPT = """You read OCR text from a screenshot of a Malaysian bank or e-wallet payment receipt (Touch 'n Go, Maybank, ShopeePay, DuitNow QR, CIMB, RHB, ...).
@@ -354,16 +418,18 @@ def llm_parse_receipt(text, categories):
             "category": category if category in categories else UNCATEGORIZED}
 
 
-def classify(recipient, rules=None, categories=(), use_llm=False):
-    """Return {merchant, merchant_key, category, method}.
+def classify(recipient, rules=None, categories=(), use_llm=False, extra_keywords=None):
+    """Return {merchant, merchant_key, category, method, keyword}.
 
     rules: {merchant_key: {"merchant": str, "category": str}} — learned from
-    user corrections / earlier results. method is one of learned, fuzzy,
-    keyword, llm, none.
+    user corrections / earlier results. extra_keywords: approved learned
+    keywords [(category, keyword), ...]. method is one of learned, fuzzy,
+    keyword, llm, none. keyword is the generalising word Gemini pointed out
+    (a suggestion only; "" otherwise).
     """
     key, display = normalize_merchant(recipient)
     result = {"merchant": display, "merchant_key": key,
-              "category": UNCATEGORIZED, "method": "none"}
+              "category": UNCATEGORIZED, "method": "none", "keyword": ""}
     if not key:
         return result
     rules = rules or {}
@@ -376,7 +442,7 @@ def classify(recipient, rules=None, categories=(), use_llm=False):
         result.update(category=hit["category"], method=method,
                       merchant=hit.get("merchant") or display)
         return result
-    category = keyword_category(key)
+    category = keyword_category(key, extra_keywords)
     if category:
         result.update(category=category, method="keyword")
         return result
@@ -384,7 +450,7 @@ def classify(recipient, rules=None, categories=(), use_llm=False):
         out = llm_classify(recipient, categories)
         if out and out["category"] != UNCATEGORIZED:
             result.update(category=out["category"], method="llm",
-                          merchant=out["merchant"] or display)
+                          merchant=out["merchant"] or display, keyword=out["keyword"])
     return result
 
 

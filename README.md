@@ -16,6 +16,7 @@ summary, a chart view, and add, edit or delete any entry.
 | `/charts` | Trends — monthly spend by category, category totals, annual totals |
 | `/transactions` | Filterable list of all entries (month, category chips, **Needs review**), tap one to edit |
 | `/ai-status` | Is Gemini configured? Run a test receipt and see the raw result or error |
+| `/rules` | Weekly review of what the app has learned: confirm or fix AI-guessed merchants, approve or reject suggested keywords, see what is still uncategorised |
 | `/recategorise` | POST — retry auto-categorisation for Uncategorized entries (button on History → Needs review) |
 | `/add` | Manual entry form |
 | `/edit/<id>` | Edit or delete a single entry |
@@ -31,8 +32,9 @@ Run `supabase_add_details_column.sql` once in the Supabase SQL Editor
 column used by the forms and the Shortcut endpoint.
 
 Also run `supabase_add_merchant_rules.sql` (learned merchant → category
-rules) and `supabase_add_raw_text.sql` (keeps each upload's OCR text so bad
-entries can be re-read later).
+rules), `supabase_add_raw_text.sql` (keeps each upload's OCR text so bad
+entries can be re-read later) and `supabase_add_keyword_rules.sql` (learned
+category keywords you approve on the **Rules** tab).
 
 ### 2. Environment variables (Render → your service → Environment)
 

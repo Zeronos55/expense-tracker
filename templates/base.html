@@ -258,6 +258,9 @@
     <a href="/charts" class="{{ 'active' if request.endpoint == 'charts' }}">
         <span class="pill"><svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg></span>Trends
     </a>
+    <a href="/rules" class="{{ 'active' if request.endpoint == 'rules_page' }}">
+        <span class="pill"><svg viewBox="0 0 24 24"><path d="M4 6h10M18 6h2M4 12h2M10 12h10M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg></span>Rules
+    </a>
     <a href="/add" class="add {{ 'active' if request.endpoint == 'add' }}">
         <span class="pill"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></span>Add
     </a>

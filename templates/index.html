@@ -97,6 +97,12 @@
     {% endif %}
 </section>
 
+{% if rules_pending %}
+<a class="msg-info" href="/rules" style="display:block; text-decoration:none;">
+    🧠 {{ rules_pending }} thing{{ 's' if rules_pending != 1 }} the app learned {{ 'are' if rules_pending != 1 else 'is' }} waiting for your review →
+</a>
+{% endif %}
+
 {% if view.insights %}
 <div class="insights">
     {% for c in view.insights %}

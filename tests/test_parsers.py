@@ -66,6 +66,7 @@ def test_label_only_column_gives_none():
 def client(monkeypatch):
     monkeypatch.setattr(app, "SHORTCUT_SECRET", "s")
     monkeypatch.setattr(app, "merchant_rules", lambda: {})
+    monkeypatch.setattr(app, "approved_keywords", lambda: [])
     monkeypatch.setattr(app, "llm_parse_receipt", lambda text, cats: None)
     saved = []
     monkeypatch.setattr(app, "db_insert", lambda *a, **k: saved.append(a))
@@ -87,3 +88,9 @@ def test_partial_read_warns(client):
 def test_good_read_message(client):
     r = client.post("/upload-from-shortcut", data={"secret": "s", "text": TNG_COLUMNS})
     assert r.get_json()["message"].startswith("✓ RM 12.90 · HEXTAR LUCKIN COFFEE")
+
+def test_ai_outage_is_named_in_the_notification(client, monkeypatch):
+    monkeypatch.setattr(app.categorizer, "last_llm_error", "HTTP 429: quota exceeded")
+    text = "Merchant\nZZZ QWERTY\nRM 5.00\n06/10/2026"
+    msg = client.post("/upload-from-shortcut", data={"secret": "s", "text": text}).get_json()["message"]
+    assert msg.endswith("Uncategorized (AI unavailable: HTTP 429: quota exceeded)")

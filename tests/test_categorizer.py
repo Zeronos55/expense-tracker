@@ -148,3 +148,60 @@ def test_error_message_is_readable():
     body = '{"error": {"code": 404, "message": "This model models/x is gone.",\n "status": "NOT_FOUND"}}'
     assert categorizer.api_error_message(body) == "This model models/x is gone."
     assert categorizer.api_error_message("<html>oops</html>") == "<html>oops</html>"
+
+
+# ── learned keywords + review loop ───────────────────────
+
+@pytest.mark.parametrize("name, expected", [
+    ("Yifu Catering Mgmt", "Food & Dining"),
+    ("Chang cheng roasted chicken", "Food & Dining"),
+    ("FEEDME POS SDN BHD", "Food & Dining"),
+    ("IKANO HANDEL SDN BHD", "Shopping"),
+])
+def test_real_merchants_need_no_ai(name, expected):
+    assert classify(name)["category"] == expected
+    assert classify(name)["method"] == "keyword"
+
+def test_unlisted_outlet_and_person_stay_uncategorized():
+    assert categorize("MOMOYO TAMAN HARMONI INDAH") == "Uncategorized"
+    assert categorize("CHAN SIEW LANG") == "Uncategorized"
+
+def test_approved_keywords_apply_after_builtin():
+    extra = [("Transport", "CARWASH"), ("Shopping", "CATERING")]
+    assert classify("SPARKLE CARWASH", extra_keywords=extra)["category"] == "Transport"
+    # built-in rules come first, so an approved keyword can't override them
+    assert classify("YIFU CATERING", extra_keywords=extra)["category"] == "Food & Dining"
+    assert classify("SPARKLE CARWASH")["category"] == "Uncategorized"
+
+def test_suggest_keywords_needs_support_and_agreement():
+    merchants = {
+        "ALPHA DOBI": "Utilities", "BETA DOBI": "Utilities", "GAMMA DOBI": "Utilities",
+        "ONE FRESH": "Food & Dining", "TWO FRESH": "Food & Dining",      # only 2 merchants
+        "A MIXED": "Food & Dining", "B MIXED": "Shopping", "C MIXED": "Transport",
+        "X LUCKIN COFFEE": "Food & Dining", "Y LUCKIN COFFEE": "Food & Dining",
+        "Z LUCKIN COFFEE": "Food & Dining",                              # COFFEE already built in
+        "P SDN": "Shopping", "Q SDN": "Shopping", "R SDN": "Shopping",   # noise token
+        "U1": "Uncategorized",
+    }
+    got = {s["keyword"]: s for s in categorizer.suggest_keywords(merchants)}
+    assert set(got) == {"DOBI", "LUCKIN"}
+    assert got["DOBI"]["category"] == "Utilities" and got["DOBI"]["support"] == 3
+
+def test_suggest_keywords_skips_decided_words():
+    merchants = {f"{n} DOBI": "Utilities" for n in ("ALPHA", "BETA", "GAMMA")}
+    assert categorizer.suggest_keywords(merchants, skip=["dobi"]) == []
+
+def test_clean_keyword_only_accepts_a_real_word_from_the_merchant():
+    key = "YIFU CATERING MGMT"
+    assert categorizer.clean_keyword("catering", key) == "CATERING"
+    assert categorizer.clean_keyword("FOOD", key) == ""          # not in the merchant name
+    assert categorizer.clean_keyword("MGMT", "YIFU MGMT") == "MGMT"
+    assert categorizer.clean_keyword("SDN", "YIFU SDN") == ""     # noise token
+    assert categorizer.clean_keyword("YIFU CATERING", key) == ""  # more than one word
+
+def test_llm_classify_returns_a_cleaned_keyword(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    monkeypatch.setattr(categorizer.urllib.request, "urlopen", lambda req, timeout: _gemini_reply(
+        {"merchant": "Sparkle Car Wash", "category": "Transport", "keyword": "carwash"}))
+    out = categorizer.llm_classify("SPARKLE CARWASH SDN BHD", ["Transport"])
+    assert out == {"merchant": "Sparkle Car Wash", "category": "Transport", "keyword": "CARWASH"}
