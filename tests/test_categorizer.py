@@ -239,3 +239,8 @@ def test_pinned_model_still_waits_and_retries_on_503(monkeypatch):
     monkeypatch.setattr(categorizer.urllib.request, "urlopen", fake)
     assert categorizer.llm_classify("X", CATS)["category"] == "Shopping"
     assert slept == [2] and all("gemini-test-flash" in u for u in n)
+
+def test_gifts_keywords():
+    for note in ["birthday cake", "Gift for mum", "angpao", "ang pao for kids"]:
+        assert categorize(note) == "Gifts", note
+    assert categorize("crispy chicken") == "Food & Dining"

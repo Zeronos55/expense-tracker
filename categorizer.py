@@ -40,7 +40,7 @@ FIELD_LABELS = {"WALLET", "TRANSACTION TYPE", "TRANSACTION", "REFERENCE NO",
                 "PAYMENT METHOD", "PAID FROM", "PAID WITH", "PAYMENT TYPE",
                 "TRANSFER TO", "MERCHANT NAME", "RECIPIENT NAME",
                 "RECIPIENT REFERENCE", "BENEFICIARY", "BENEFICIARY NAME",
-                "TOTAL AMOUNT", "REMARKS", "REFERENCE ID"}
+                "TOTAL AMOUNT", "REMARKS", "REMARK", "RECEIVER", "REFERENCE ID"}
 # Plus values that are never a payee either.
 LABEL_BLOCKLIST = FIELD_LABELS | {"NOT FOUND", "EWALLET", "E WALLET", "LEAD",
                                   "SUCCESSFUL", "DUITNOW QR", "DUITNOW", "TNG"}
@@ -78,6 +78,7 @@ KEYWORD_RULES = [
                   "MYDIN", "LOTUS", "TESCO", "7 ELEVEN", "7ELEVEN"]),
     ("Entertainment", ["NETFLIX", "SPOTIFY", "STEAM", "YOUTUBE", "DISNEY",
                        "GSC", "TGV"]),
+    ("Gifts", ["GIFT", "GIFTS", "BIRTHDAY", "ANGPAO", "ANG PAO", "HONGBAO"]),
     ("Health & Fitness", ["FITNESS", "GYM", "YOGA", "CLINIC", "KLINIK",
                           "PHARMACY", "FARMASI", "HOSPITAL", "ARK"]),
     ("Utilities", ["TNB", "SYABAS", "AIR SELANGOR", "UNIFI", "MAXIS",
@@ -393,7 +394,7 @@ Extract the payment. Rules:
 - merchant: who was paid (shop / person / service), cleaned up, e.g. "Luckin Coffee". NEVER a field label or app word such as "Wallet", "Transaction Type", "Reference No", "Payment Details", "Email", "Status", "Successful", "DuitNow QR", "eWallet". If no payee is visible, return "".
 - amount: the amount paid in RM as a number (no currency), 0 if not found.
 - date: DD/MM/YYYY, "" if not found.
-- category: best fit from: {categories}. Use "{uncat}" only if you really can't tell. Reloads/top-ups of a wallet are Transport only if it is a Touch 'n Go toll/transit reload, otherwise "{uncat}".
+- category: best fit from: {categories}. Use "{uncat}" only if you really can't tell. Reloads/top-ups of a wallet are Transport only if it is a Touch 'n Go toll/transit reload, otherwise "{uncat}". For a transfer to a person (Receiver / Remark fields) judge by the Remark, never by the person's name.
 
 Examples:
 "Transaction Type DuitNow QR\nMerchant HEXTAR LUCKIN COFFEE\nAmount RM12.90\n01/10/2026" -> {{"merchant": "Luckin Coffee", "amount": 12.90, "date": "01/10/2026", "category": "Food & Dining"}}

@@ -94,3 +94,51 @@ def test_ai_outage_is_named_in_the_notification(client, monkeypatch):
     text = "Merchant\nZZZ QWERTY\nRM 5.00\n06/10/2026"
     msg = client.post("/upload-from-shortcut", data={"secret": "s", "text": text}).get_json()["message"]
     assert msg.endswith("Uncategorized (AI unavailable: HTTP 429: quota exceeded)")
+
+
+# Bank "Transferred" screen: labels first, then values. The payee is a person,
+# so the Remark says what it was for.
+TRANSFER = """10:45
+66
+RM 29.68
+Transferred
+Receiver
+Remark
+Date & Time
+TAN AH BENG
+birthday cake
+22/10/2026 10:45:15
+Eastel
+Paying too much for prepaid?
+Done"""
+
+TRANSFER_NO_REMARK = TRANSFER.replace("Remark\n", "").replace("birthday cake\n", "")
+
+def test_transfer_receiver_and_remark_are_read():
+    p = app.parse_receipt(TRANSFER)
+    assert p["recipient"] == "TAN AH BENG" and p["amount"] == 29.68
+    assert p["date"] == "22/10/2026" and p["remark"] == "birthday cake"
+
+def test_blank_remark_is_not_the_date():
+    assert app.receipt_remark(TRANSFER_NO_REMARK) is None
+    assert app.parse_receipt(TRANSFER_NO_REMARK)["recipient"] == "TAN AH BENG"
+
+def test_transfer_is_judged_by_remark_not_by_the_name(monkeypatch):
+    monkeypatch.setattr(app, "llm_parse_receipt", lambda text, cats: None)
+    rules = {"TAN AH BENG": {"merchant": None, "category": "Food & Dining"}}
+    p = app.parse_receipt(TRANSFER, rules)
+    assert p["category"] == "Gifts" and p["method"] == "keyword"
+
+def test_transfer_never_learns_the_person_as_a_merchant(monkeypatch):
+    monkeypatch.setattr(app, "llm_parse_receipt", lambda text, cats: {
+        "merchant": "", "amount": None, "date": None, "category": "Entertainment"})
+    learned = []
+    monkeypatch.setattr(app, "save_merchant_rule", lambda *a, **k: learned.append(a))
+    text = TRANSFER.replace("birthday cake", "chill guy")
+    p = app.parse_receipt(text)
+    assert p["category"] == "Entertainment" and learned == []
+
+def test_remark_is_saved_as_details(client):
+    r = client.post("/upload-from-shortcut", data={"secret": "s", "text": TRANSFER})
+    assert r.status_code == 200
+    assert client.saved[0][6] == "birthday cake" and client.saved[0][3] == "Gifts"

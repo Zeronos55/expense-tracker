@@ -43,7 +43,7 @@ def require_login():
 
 # ── CONFIG ───────────────────────────────────────────────
 PRESET_CATEGORIES = ["Food & Dining", "Transport", "Shopping",
-                     "Entertainment", "Health & Fitness", "Utilities"]
+                     "Entertainment", "Health & Fitness", "Utilities", "Gifts"]
 
 SOURCE_LABELS = {
     "TNG": "Touch 'n Go", "SHOPEE": "ShopeePay",
@@ -55,7 +55,7 @@ SOURCE_LABELS = {
 CATEGORY_ICONS = {
     "Food & Dining": "🍜", "Transport": "🚗", "Shopping": "🛍️",
     "Entertainment": "🎬", "Health & Fitness": "💊", "Utilities": "💡",
-    "Uncategorized": "❔",
+    "Gifts": "🎁", "Uncategorized": "❔",
 }
 
 # Fixed category -> colour slot (validated categorical palette, see
@@ -92,7 +92,20 @@ app.jinja_env.filters["rm"] = lambda v: f"{float(v or 0):,.2f}"
 # Field names a payee follows, most specific first. A label must start its
 # line (so "sent to email" or "LEAD" from body text is never a payee).
 PAYEE_LABELS = ["Merchant", "Merchant Name", "Pay To", "Paid To", "Recipient",
-                "Recipient Name", "Beneficiary Name", "Beneficiary", "Transfer To", "To"]
+                "Recipient Name", "Beneficiary Name", "Beneficiary", "Transfer To",
+                "Receiver", "To"]
+REMARK_LABELS = ["Remark", "Remarks"]
+
+def receipt_remark(text):
+    """The note typed on a transfer receipt (its "Remark" field), or None.
+
+    A transfer's payee is a person, so what it was for is in the remark, not the
+    name: callers classify the remark and never learn the name as a category."""
+    value = field_value(text, REMARK_LABELS) if text else None
+    # a blank remark leaves no value, so the column layout hands back the date/amount
+    if not value or re.match(r"(?:RM\s*\d|\d{1,2}[/-]\d{1,2}[/-]\d{2,4})", value, re.I):
+        return None
+    return value
 
 def detect_source(text):
     t = text.upper()
@@ -186,6 +199,8 @@ def merchant_rules():
     (user corrections beat cached LLM results)."""
     rules = {}
     for row in db_get_all():
+        if receipt_remark(row.get("raw_text")):
+            continue  # a person's name says nothing about what a transfer was for
         key, _ = normalize_merchant(row.get("recipient") or "")
         cat = row.get("category")
         if key and cat and cat != UNCATEGORIZED and key != "NOT FOUND":
@@ -248,7 +263,8 @@ def apply_rules_to_uncategorised():
     for r in db_get_all():
         if (r.get("category") or UNCATEGORIZED) != UNCATEGORIZED or is_label(r.get("recipient")):
             continue
-        category = classify(r["recipient"], rules, extra_keywords=keywords)["category"]
+        what = receipt_remark(r.get("raw_text")) or r["recipient"]
+        category = classify(what, rules, extra_keywords=keywords)["category"]
         if category != UNCATEGORIZED:
             db_update(r["id"], "category", category)
             fixed += 1
@@ -268,12 +284,16 @@ def parse_receipt(text, rules=None, extra_keywords=None):
     """Regex parsers first; Gemini reads the whole text when they miss.
 
     extra_keywords: approved learned keywords, see approved_keywords().
-    Returns dict(date, recipient, amount, category, source, method)."""
+    Returns dict(date, recipient, amount, category, source, method, remark)."""
     source = detect_source(text)
     date, recipient, amount = PARSER_REGISTRY[source](text)
     if is_label(recipient):
         recipient = None  # "Wallet", "Transaction Type", ... are labels, not payees
-    result = classify(recipient, rules, PRESET_CATEGORIES, extra_keywords=extra_keywords)
+    # A remark means a transfer to a person: classify what it was for, and never
+    # let the person's name decide (or be learned as) a category.
+    remark = receipt_remark(text)
+    result = classify(remark or recipient, rules, PRESET_CATEGORIES,
+                      extra_keywords=extra_keywords)
     category, method = result["category"], result["method"]
 
     if not recipient or not amount or not date or category == UNCATEGORIZED:
@@ -282,16 +302,17 @@ def parse_receipt(text, rules=None, extra_keywords=None):
             recipient = recipient or ai["merchant"] or None
             amount = amount or ai["amount"]
             date = date or ai["date"]
-            if category == UNCATEGORIZED and recipient:
+            if category == UNCATEGORIZED and recipient and not remark:
                 # a learned rule for the AI-found merchant still beats the AI
                 again = classify(recipient, rules, PRESET_CATEGORIES,
                                  extra_keywords=extra_keywords)
                 category, method = again["category"], again["method"]
             if category == UNCATEGORIZED and ai["category"] != UNCATEGORIZED:
                 category, method = ai["category"], "llm"
-                save_merchant_rule(recipient, category, "llm", ai["merchant"])
+                if not remark:
+                    save_merchant_rule(recipient, category, "llm", ai["merchant"])
     return {"date": date, "recipient": recipient, "amount": amount,
-            "category": category, "source": source, "method": method}
+            "category": category, "source": source, "method": method, "remark": remark}
 
 def extract_month(date_str):
     for fmt in ["%d/%m/%Y","%d-%m-%Y","%Y-%m-%d",
@@ -643,7 +664,7 @@ def upload_from_shortcut():
         # Gemini answered but wasn't sure).
         p["ai_error"] = (categorizer.last_llm_error
                          if p["recipient"] and p["category"] == UNCATEGORIZED else None)
-        details = request.form.get("details", "").strip()
+        details = request.form.get("details", "").strip() or p["remark"] or ""
         if not p["amount"] and not p["recipient"]:
             # nothing readable (wrong screenshot, blank OCR): don't save junk
             return jsonify({"status": "error", **p,
@@ -695,8 +716,9 @@ def edit(row_id):
         category = request.form.get("category", "").strip()
         if category == "custom":
             category = request.form.get("custom_category", "").strip()
-        save_merchant_rule(request.form.get("recipient") or row.get("recipient"),
-                           category, "user")
+        if not receipt_remark(row.get("raw_text")):   # a person's name isn't a merchant
+            save_merchant_rule(request.form.get("recipient") or row.get("recipient"),
+                               category, "user")
         return redirect(return_to)
 
     return render_template("edit.html", row=row,
@@ -750,10 +772,18 @@ def recategorise():
         if time.time() - started > RECATEGORISE_BUDGET_S:
             stopped_early = True
             break
+        remark = receipt_remark(r.get("raw_text"))
         if r.get("raw_text") and is_label(r.get("recipient")):
             p = parse_receipt(r["raw_text"], rules, keywords)
             updates = {k: v for k, v in (("recipient", p["recipient"]), ("amount", p["amount"]),
-                                         ("date", p["date"]), ("category", p["category"])) if v}
+                                         ("date", p["date"]), ("category", p["category"]),
+                                         ("details", None if r.get("details") else p["remark"])) if v}
+        elif remark:
+            # transfer to a person: judge by the remark, and learn nothing about the name
+            res = classify(remark, rules, PRESET_CATEGORIES, use_llm=True, extra_keywords=keywords)
+            updates = {"category": res["category"]}
+            if not r.get("details"):
+                updates["details"] = remark
         else:
             key = normalize_merchant(r["recipient"])[0]
             if key not in done:
