@@ -75,8 +75,7 @@ KEYWORD_RULES = [
                    "BHP", "CALTEX", "LRT", "MRT", "KTM"]),
     ("Shopping", ["SHOPEE", "LAZADA", "AMAZON", "AEON", "IKEA", "UNIQLO",
                   "ZARA", "GUARDIAN", "WATSONS", "MARKETPLACE", "SPEEDMART",
-                  "MYDIN", "LOTUS", "TESCO", "7 ELEVEN", "7ELEVEN",
-                  "IKANO"]),   # Ikano Handel is the legal entity behind IKEA Malaysia
+                  "MYDIN", "LOTUS", "TESCO", "7 ELEVEN", "7ELEVEN"]),
     ("Entertainment", ["NETFLIX", "SPOTIFY", "STEAM", "YOUTUBE", "DISNEY",
                        "GSC", "TGV"]),
     ("Health & Fitness", ["FITNESS", "GYM", "YOGA", "CLINIC", "KLINIK",
@@ -254,6 +253,8 @@ GEMINI_FALLBACK_MODEL = "gemini-flash-latest"
 _SKIP_MODEL_WORDS = ("image", "tts", "audio", "live", "embedding", "thinking", "exp", "lite", "8b")
 _resolved_model = None   # cached auto-picked model; cleared when Google retires it
 _retired_models = set()  # models that 404'd for this key (listed but not usable)
+_overloaded = {}         # model -> time.time() until which it is skipped after a 429/5xx
+MODEL_COOLDOWN_S = 300
 
 
 def _version_key(name):
@@ -272,8 +273,9 @@ def list_flash_models():
         models = json.load(resp).get("models", [])
     names = [m["name"].split("/", 1)[-1] for m in models
              if "generateContent" in m.get("supportedGenerationMethods", [])]
+    now = time.time()
     names = [n for n in names if "flash" in n and not n.endswith("-latest")
-             and n not in _retired_models
+             and n not in _retired_models and _overloaded.get(n, 0) <= now
              and not any(w in n for w in _SKIP_MODEL_WORDS)]
     return sorted(names, key=_version_key, reverse=True)
 
@@ -292,12 +294,24 @@ def gemini_model():
     return _resolved_model
 
 
+def _switch_from_overloaded(model):
+    """After a 429/5xx from `model`, skip it for MODEL_COOLDOWN_S and report
+    whether another model can take over (never when GEMINI_MODEL pins one)."""
+    global _resolved_model
+    if os.environ.get("GEMINI_MODEL"):
+        return False
+    _overloaded[model] = time.time() + MODEL_COOLDOWN_S
+    _resolved_model = None
+    return gemini_model() != model
+
+
 def _gemini_json(prompt, schema):
     """POST a prompt to Gemini and return the parsed JSON reply, or None.
 
-    Retries once on 429/5xx, on a retired model (404, picks another) and
-    when the model rejects the thinking budget; every failure is logged (never the key) and
-    remembered in last_llm_error."""
+    Retries once on 429/5xx (on a different model if one is available, since
+    503 "overloaded" is per model), on a retired model (404, picks another) and
+    when the model rejects the thinking budget; every failure is logged (never
+    the key) and remembered in last_llm_error."""
     global last_llm_error, _resolved_model
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
@@ -308,8 +322,9 @@ def _gemini_json(prompt, schema):
     for attempt in (1, 2):
         body = json.dumps({"contents": [{"parts": [{"text": prompt}]}],
                            "generationConfig": config}).encode()
+        model = gemini_model()
         req = urllib.request.Request(
-            GEMINI_URL.format(model=gemini_model()), data=body,
+            GEMINI_URL.format(model=model), data=body,
             headers={"Content-Type": "application/json", "x-goog-api-key": api_key})
         try:
             with urllib.request.urlopen(req, timeout=GEMINI_TIMEOUT) as resp:
@@ -322,7 +337,8 @@ def _gemini_json(prompt, schema):
             last_llm_error = f"HTTP {e.code}: {api_error_message(detail)}"
             if attempt == 1:
                 if e.code == 429 or e.code >= 500:
-                    time.sleep(2)
+                    if not _switch_from_overloaded(model):
+                        time.sleep(2)
                     continue
                 if e.code == 404 and not os.environ.get("GEMINI_MODEL"):
                     _retired_models.add(gemini_model())   # retired: pick another

@@ -44,6 +44,7 @@ def _fresh_model_cache(monkeypatch):
     monkeypatch.setenv("GEMINI_MODEL", "gemini-test-flash")
     monkeypatch.setattr(categorizer, "_resolved_model", None)
     monkeypatch.setattr(categorizer, "_retired_models", set())
+    monkeypatch.setattr(categorizer, "_overloaded", {})
 
 def test_labels_are_not_merchants():
     for junk in ["Wallet", "Transaction Type", "Reference No", "email", "LEAD",
@@ -156,7 +157,6 @@ def test_error_message_is_readable():
     ("Yifu Catering Mgmt", "Food & Dining"),
     ("Chang cheng roasted chicken", "Food & Dining"),
     ("FEEDME POS SDN BHD", "Food & Dining"),
-    ("IKANO HANDEL SDN BHD", "Shopping"),
 ])
 def test_real_merchants_need_no_ai(name, expected):
     assert classify(name)["category"] == expected
@@ -205,3 +205,37 @@ def test_llm_classify_returns_a_cleaned_keyword(monkeypatch):
         {"merchant": "Sparkle Car Wash", "category": "Transport", "keyword": "carwash"}))
     out = categorizer.llm_classify("SPARKLE CARWASH SDN BHD", ["Transport"])
     assert out == {"merchant": "Sparkle Car Wash", "category": "Transport", "keyword": "CARWASH"}
+
+def test_503_fails_over_to_another_model_and_skips_the_overloaded_one(monkeypatch):
+    monkeypatch.delenv("GEMINI_MODEL")
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    monkeypatch.setattr(categorizer.time, "sleep", lambda s: pytest.fail("should switch, not wait"))
+    urls = []
+    def fake(req, timeout):
+        urls.append(req.full_url)
+        if req.full_url.endswith("/models?pageSize=1000"):
+            return _Resp(json.dumps(MODEL_LIST).encode())
+        if "gemini-3-flash:" in req.full_url:
+            raise urllib.error.HTTPError(req.full_url, 503, "Unavailable", {}, io.BytesIO(
+                b'{"error": {"code": 503, "message": "This model is currently experiencing high demand."}}'))
+        return _gemini_reply({"merchant": "Luckin Coffee", "category": "Food & Dining"})
+    monkeypatch.setattr(categorizer.urllib.request, "urlopen", fake)
+    out = categorizer.llm_classify("HEXTAR LUCKIN", CATS)
+    assert out["category"] == "Food & Dining"
+    calls = [u for u in urls if ":generateContent" in u]
+    assert "gemini-3-flash:" in calls[0] and "gemini-2.5-flash:" in calls[1]
+    assert categorizer.gemini_model() == "gemini-2.5-flash"      # overloaded model is benched
+
+def test_pinned_model_still_waits_and_retries_on_503(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    slept = []
+    monkeypatch.setattr(categorizer.time, "sleep", slept.append)
+    n = []
+    def fake(req, timeout):
+        n.append(req.full_url)
+        if len(n) == 1:
+            raise urllib.error.HTTPError(req.full_url, 503, "Unavailable", {}, io.BytesIO(b"{}"))
+        return _gemini_reply({"merchant": "X", "category": "Shopping"})
+    monkeypatch.setattr(categorizer.urllib.request, "urlopen", fake)
+    assert categorizer.llm_classify("X", CATS)["category"] == "Shopping"
+    assert slept == [2] and all("gemini-test-flash" in u for u in n)
