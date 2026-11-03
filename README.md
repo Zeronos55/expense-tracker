@@ -21,6 +21,24 @@ summary, a chart view, and add, edit or delete any entry.
 | `/edit/<id>` | Edit or delete a single entry |
 | `/upload-from-shortcut` | POST endpoint for the iOS Shortcut (see below) |
 
+## Front-end
+
+The UI is **server-rendered Jinja templates plus plain JavaScript** — no
+React, no bundler, no Node build step. Deploys only need Python.
+
+- **Pages:** `templates/*.html`, all extending `templates/base.html`
+  (shared layout and CSS). Reusable pieces live in partials such as
+  `templates/_category_picker.html`.
+- **Behaviour:** small vanilla-JS snippets in a `<script>` block at the bottom
+  of the page that needs them (`add`, `index`, `charts`, `transactions`).
+  Use `document.querySelector`, `addEventListener` and `fetch` — no framework.
+- **Charts:** Chart.js is vendored at `static/js/chart.umd.js` (no CDN, no
+  npm) and loaded only by the pages that draw charts.
+- **Adding interactivity:** pass data from Flask to the page with Jinja
+  (e.g. `{{ data|tojson }}`), then read it in the page's script. If a snippet
+  grows past ~50 lines or is shared by two pages, move it to `static/js/` and
+  load it with `url_for('static', filename='js/<name>.js')`.
+
 ## One-time setup
 
 ### 1. Add the `details` column
