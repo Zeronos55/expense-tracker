@@ -74,6 +74,7 @@ KEYWORD_RULES = [
                           "PHARMACY", "FARMASI", "HOSPITAL", "ARK"]),
     ("Utilities", ["TNB", "SYABAS", "AIR SELANGOR", "UNIFI", "MAXIS",
                    "CELCOM", "DIGI", "TELEKOM"]),
+    ("Gifts", ["GIFT", "HAMPER", "FLORIST", "FLOWER"]),
 ]
 
 def _compile(kw):

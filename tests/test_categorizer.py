@@ -148,3 +148,9 @@ def test_error_message_is_readable():
     body = '{"error": {"code": 404, "message": "This model models/x is gone.",\n "status": "NOT_FOUND"}}'
     assert categorizer.api_error_message(body) == "This model models/x is gone."
     assert categorizer.api_error_message("<html>oops</html>") == "<html>oops</html>"
+
+
+def test_gift_keyword():
+    from categorizer import keyword_category
+    assert keyword_category("YY GIFT") == "Gifts"
+    assert keyword_category("GIFT SHOP") == "Gifts"
