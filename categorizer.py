@@ -162,7 +162,7 @@ def field_value(text, labels):
 
 
 _DATE_LINE = re.compile(r"\d{1,2}[/-]\d{1,2}[/-]\d{2,4}")
-REMARK_LABELS = ["Remark", "Remarks", "Note", "Notes"]
+REMARK_LABELS = ["Remark", "Remarks", "Note", "Notes", "Payment Details"]
 
 
 def remark_value(text):
@@ -177,15 +177,20 @@ def remark_value(text):
     for i, line in enumerate(lines):
         if _label_key(line) not in {_label_key(l) for l in REMARK_LABELS}:
             continue
+        if i + 1 < len(lines) and not is_field_label(lines[i + 1]):
+            # label/value pairs ("Payment Details" / "yy gift")
+            return None if is_label(lines[i + 1]) else lines[i + 1]
         start = i
         while start > 0 and is_field_label(lines[start - 1]):
             start -= 1
         end = i
         while end + 1 < len(lines) and is_field_label(lines[end + 1]):
             end += 1
+        if not any(_label_key(l).startswith("DATE") for l in lines[i + 1:end + 1]):
+            return None    # a label followed by labels only: it has no value
         values = []
         for v in lines[end + 1:]:
-            if _DATE_LINE.search(v):
+            if _DATE_LINE.search(v) or is_field_label(v):
                 break
             values.append(v)
         has_receiver_before = start < i
