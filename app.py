@@ -6,7 +6,7 @@ from collections import defaultdict, Counter
 from urllib.parse import urlparse
 import categorizer
 from categorizer import (classify, normalize_merchant, is_label, field_value,
-                         llm_parse_receipt, UNCATEGORIZED)
+                         llm_parse_receipt, remark_value, UNCATEGORIZED)
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -91,7 +91,8 @@ app.jinja_env.filters["rm"] = lambda v: f"{float(v or 0):,.2f}"
 # Field names a payee follows, most specific first. A label must start its
 # line (so "sent to email" or "LEAD" from body text is never a payee).
 PAYEE_LABELS = ["Merchant", "Merchant Name", "Pay To", "Paid To", "Recipient",
-                "Recipient Name", "Beneficiary Name", "Beneficiary", "Transfer To", "To"]
+                "Recipient Name", "Receiver", "Beneficiary Name", "Beneficiary",
+                "Transfer To", "To"]
 
 def detect_source(text):
     t = text.upper()
@@ -223,13 +224,21 @@ def known_sources():
 def parse_receipt(text, rules=None):
     """Regex parsers first; Gemini reads the whole text when they miss.
 
-    Returns dict(date, recipient, amount, category, source, method)."""
+    Returns dict(date, recipient, amount, category, source, method, remark).
+    For transfers the Remark ("Matcha") says what it was for, so it can set the
+    category; it never becomes a learned merchant rule (it's about this
+    payment, not the person)."""
     source = detect_source(text)
+    remark = remark_value(text)
     date, recipient, amount = PARSER_REGISTRY[source](text)
     if is_label(recipient):
         recipient = None  # "Wallet", "Transaction Type", ... are labels, not payees
     result = classify(recipient, rules, PRESET_CATEGORIES)
     category, method = result["category"], result["method"]
+    if category == UNCATEGORIZED and remark:
+        by_remark = classify(remark, rules, PRESET_CATEGORIES)
+        if by_remark["category"] != UNCATEGORIZED:
+            category, method = by_remark["category"], "remark"
 
     if not recipient or not amount or not date or category == UNCATEGORIZED:
         ai = llm_parse_receipt(text, PRESET_CATEGORIES)
@@ -243,9 +252,11 @@ def parse_receipt(text, rules=None):
                 category, method = again["category"], again["method"]
             if category == UNCATEGORIZED and ai["category"] != UNCATEGORIZED:
                 category, method = ai["category"], "llm"
-                save_merchant_rule(recipient, category, "llm", ai["merchant"])
+                if not remark:
+                    save_merchant_rule(recipient, category, "llm", ai["merchant"])
     return {"date": date, "recipient": recipient, "amount": amount,
-            "category": category, "source": source, "method": method}
+            "category": category, "source": source, "method": method,
+            "remark": remark}
 
 def extract_month(date_str):
     for fmt in ["%d/%m/%Y","%d-%m-%Y","%Y-%m-%d",
@@ -588,7 +599,7 @@ def upload_from_shortcut():
             return jsonify({"status": "error", "message": "No text received"}), 400
 
         p = parse_receipt(text, merchant_rules())
-        details = request.form.get("details", "").strip()
+        details = request.form.get("details", "").strip() or p["remark"] or ""
         if not p["amount"] and not p["recipient"]:
             # nothing readable (wrong screenshot, blank OCR): don't save junk
             return jsonify({"status": "error", **p,

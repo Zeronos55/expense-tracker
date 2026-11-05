@@ -33,7 +33,8 @@ FIELD_LABELS = {"WALLET", "TRANSACTION TYPE", "TRANSACTION", "REFERENCE NO",
                 "PAYMENT METHOD", "PAID FROM", "PAID WITH", "PAYMENT TYPE",
                 "TRANSFER TO", "MERCHANT NAME", "RECIPIENT NAME",
                 "RECIPIENT REFERENCE", "BENEFICIARY", "BENEFICIARY NAME",
-                "TOTAL AMOUNT", "REMARKS", "REFERENCE ID"}
+                "TOTAL AMOUNT", "REMARKS", "REFERENCE ID", "RECEIVER", "REMARK",
+                "NOTE", "NOTES"}
 # Plus values that are never a payee either.
 LABEL_BLOCKLIST = FIELD_LABELS | {"NOT FOUND", "EWALLET", "E WALLET", "LEAD",
                                   "SUCCESSFUL", "DUITNOW QR", "DUITNOW", "TNG"}
@@ -59,7 +60,8 @@ KEYWORD_RULES = [
     ("Food & Dining", ["GRABFOOD", "FOODPANDA", "MAMAK", "MCDONALD", "MCD",
                        "KFC", "SUBWAY", "STARBUCKS", "TEALIVE", "CHATIME",
                        "RESTAURANT", "RESTORAN", "KEDAI MAKAN", "JUICE",
-                       "CAFE", "BAKERY", "PIZZA", "BURGER", "COFFEE"]),
+                       "CAFE", "BAKERY", "PIZZA", "BURGER", "COFFEE",
+                       "MATCHA", "BOBA", "LUNCH", "DINNER", "BREAKFAST"]),
     ("Transport", ["MYRAPID", "TOUCHNGO", "TOUCH N GO RELOAD", "PARKING",
                    "TOLL", "GRAB", "GRABCAR", "PETRONAS", "SHELL", "PETRON",
                    "BHP", "CALTEX", "LRT", "MRT", "KTM"]),
@@ -157,6 +159,40 @@ def field_value(text, labels):
             if k < len(values) and not is_label(values[k]):
                 return values[k]
     return None
+
+
+_DATE_LINE = re.compile(r"\d{1,2}[/-]\d{1,2}[/-]\d{2,4}")
+REMARK_LABELS = ["Remark", "Remarks", "Note", "Notes"]
+
+
+def remark_value(text):
+    """The free-text remark of a transfer receipt ("Matcha", "lunch"), or None.
+
+    Same-line ("Remark lunch") is handled by field_value. In the column layout
+    (labels Receiver / Remark / Date & Time first, values after) a long receiver
+    name can wrap onto extra lines, so positions can't be trusted; instead the
+    remark is the last value before the date line, and only counts when a
+    receiver value precedes it (otherwise that lone value is the receiver)."""
+    lines = [l.strip() for l in (text or "").splitlines() if l.strip()]
+    for i, line in enumerate(lines):
+        if _label_key(line) not in {_label_key(l) for l in REMARK_LABELS}:
+            continue
+        start = i
+        while start > 0 and is_field_label(lines[start - 1]):
+            start -= 1
+        end = i
+        while end + 1 < len(lines) and is_field_label(lines[end + 1]):
+            end += 1
+        values = []
+        for v in lines[end + 1:]:
+            if _DATE_LINE.search(v):
+                break
+            values.append(v)
+        has_receiver_before = start < i
+        if has_receiver_before:
+            return values[-1] if len(values) >= 2 and not is_label(values[-1]) else None
+        return values[0] if values and not is_label(values[0]) else None
+    return field_value(text, REMARK_LABELS)
 
 
 def alias_key(name):
@@ -313,7 +349,7 @@ Extract the payment. Rules:
 - merchant: who was paid (shop / person / service), cleaned up, e.g. "Luckin Coffee". NEVER a field label or app word such as "Wallet", "Transaction Type", "Reference No", "Payment Details", "Email", "Status", "Successful", "DuitNow QR", "eWallet". If no payee is visible, return "".
 - amount: the amount paid in RM as a number (no currency), 0 if not found.
 - date: DD/MM/YYYY, "" if not found.
-- category: best fit from: {categories}. Use "{uncat}" only if you really can't tell. Reloads/top-ups of a wallet are Transport only if it is a Touch 'n Go toll/transit reload, otherwise "{uncat}".
+- category: best fit from: {categories}. For a transfer to a person, the Remark line says what it was for ("Matcha", "lunch", "HuuThai" = a Thai restaurant): use it to pick the category. Use "{uncat}" only if you really can't tell. Reloads/top-ups of a wallet are Transport only if it is a Touch 'n Go toll/transit reload, otherwise "{uncat}".
 
 Examples:
 "Transaction Type DuitNow QR\nMerchant HEXTAR LUCKIN COFFEE\nAmount RM12.90\n01/10/2026" -> {{"merchant": "Luckin Coffee", "amount": 12.90, "date": "01/10/2026", "category": "Food & Dining"}}
