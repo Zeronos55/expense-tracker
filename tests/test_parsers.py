@@ -87,3 +87,73 @@ def test_partial_read_warns(client):
 def test_good_read_message(client):
     r = client.post("/upload-from-shortcut", data={"secret": "s", "text": TNG_COLUMNS})
     assert r.get_json()["message"].startswith("✓ RM 12.90 · HEXTAR LUCKIN COFFEE")
+
+
+# Maybank-style "Transferred" screen: labels first, values after; the remark
+# is the line before the date. A long receiver name wraps onto a second line.
+TRANSFER_HUUTHAI = """01:40
+RM 20.88
+Transferred
+Receiver
+Remark
+Date & Time
+SIEW MING HUI
+HuuThai
+05/11/2026 01:40:19
+Ad Your 11.11 shopping list is missing tickets!
+Done"""
+
+TRANSFER_WRAPPED = """15:50
+RM 14.00
+Transferred
+Receiver
+Remark
+Date & Time
+ISABELLE CHANG
+EE LIN
+Matcha
+05/11/2026 15:50:24
+Done"""
+
+TRANSFER_NO_REMARK = """RM 9.00
+Transferred
+Receiver
+Remark
+Date & Time
+AHMAD BIN ALI
+05/11/2026 10:00:00
+Done"""
+
+TRANSFER_INLINE = """RM 9.00
+Transferred
+Receiver AHMAD BIN ALI
+Remark nasi lemak
+05/11/2026"""
+
+
+def test_remark_column_layout():
+    assert app.remark_value(TRANSFER_HUUTHAI) == "HuuThai"
+
+def test_remark_with_wrapped_receiver_name():
+    assert app.remark_value(TRANSFER_WRAPPED) == "Matcha"
+
+def test_no_remark_does_not_return_receiver():
+    assert app.remark_value(TRANSFER_NO_REMARK) is None
+
+def test_remark_inline():
+    assert app.remark_value(TRANSFER_INLINE) == "nasi lemak"
+
+def test_receiver_is_payee_and_remark_sets_category(monkeypatch):
+    monkeypatch.setattr(app, "llm_parse_receipt", lambda *a, **k: None)
+    p = app.parse_receipt(TRANSFER_WRAPPED, {})
+    assert p["recipient"] == "ISABELLE CHANG"
+    assert p["remark"] == "Matcha" and p["category"] == "Food & Dining"
+    assert p["method"] == "remark"
+
+def test_remark_category_is_not_saved_as_person_rule(monkeypatch):
+    saved = []
+    monkeypatch.setattr(app, "save_merchant_rule", lambda *a, **k: saved.append(a))
+    monkeypatch.setattr(app, "llm_parse_receipt", lambda *a, **k: {
+        "merchant": "Huu Thai", "amount": 20.88, "date": "05/11/2026", "category": "Food & Dining"})
+    p = app.parse_receipt(TRANSFER_HUUTHAI, {})
+    assert p["category"] == "Food & Dining" and saved == []
