@@ -42,7 +42,7 @@ def require_login():
 
 # ── CONFIG ───────────────────────────────────────────────
 PRESET_CATEGORIES = ["Food & Dining", "Transport", "Shopping",
-                     "Entertainment", "Health & Fitness", "Utilities"]
+                     "Entertainment", "Health & Fitness", "Utilities", "Gifts"]
 
 SOURCE_LABELS = {
     "TNG": "Touch 'n Go", "SHOPEE": "ShopeePay",
@@ -54,7 +54,7 @@ SOURCE_LABELS = {
 CATEGORY_ICONS = {
     "Food & Dining": "🍜", "Transport": "🚗", "Shopping": "🛍️",
     "Entertainment": "🎬", "Health & Fitness": "💊", "Utilities": "💡",
-    "Uncategorized": "❔",
+    "Gifts": "🎁", "Uncategorized": "❔",
 }
 
 # Fixed category -> colour slot (validated categorical palette, see
@@ -62,7 +62,7 @@ CATEGORY_ICONS = {
 CATEGORY_SLOTS = {
     "Food & Dining": "food", "Transport": "transport", "Shopping": "shopping",
     "Entertainment": "fun", "Health & Fitness": "health", "Utilities": "bills",
-    "Uncategorized": "none",
+    "Gifts": "gift", "Uncategorized": "none",
 }
 
 def category_slot(value):
