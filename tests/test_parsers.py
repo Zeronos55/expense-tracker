@@ -157,3 +157,32 @@ def test_remark_category_is_not_saved_as_person_rule(monkeypatch):
         "merchant": "Huu Thai", "amount": 20.88, "date": "05/11/2026", "category": "Food & Dining"})
     p = app.parse_receipt(TRANSFER_HUUTHAI, {})
     assert p["category"] == "Food & Dining" and saved == []
+
+
+# Touch 'n Go "Transfer to Wallet": label/value pairs, note under "Payment Details".
+TNG_TRANSFER_WALLET = """19:44
+Details
+-RM28.50
+Transaction Type
+Transfer to Wallet
+Transfer To
+YEOW LI YAN
+Payment Details
+yy gift
+Payment Method
+eWallet Balance
+Date/Time
+05/11/2026 19:43:42
+Status
+Successful"""
+
+
+def test_payment_details_is_remark():
+    assert app.remark_value(TNG_TRANSFER_WALLET) == "yy gift"
+
+def test_payment_details_inline():
+    assert app.remark_value("Payment Details lunch with ah kow\n05/11/2026") == "lunch with ah kow"
+
+def test_payment_details_empty_is_not_next_label():
+    text = "Transfer To\nYEOW LI YAN\nPayment Details\nPayment Method\neWallet Balance\nDate/Time\n05/11/2026"
+    assert app.remark_value(text) is None
