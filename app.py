@@ -94,15 +94,37 @@ PAYEE_LABELS = ["Merchant", "Merchant Name", "Pay To", "Paid To", "Recipient",
                 "Recipient Name", "Receiver", "Beneficiary Name", "Beneficiary",
                 "Transfer To", "To"]
 
+def _hits(text, patterns):
+    return sum(1 for p in patterns if re.search(p, text, re.IGNORECASE | re.MULTILINE))
+
+# Screenshots of banking apps rarely print the bank's name, so besides brand
+# words we recognise each app by the field labels its receipt screen uses.
+_TNG_BRAND   = [r"\bTNGD?\b", r"TOUCH\s*['’`]?\s*N\s*['’`]?\s*GO"]
+_TNG_LAYOUT  = [r"E\s?WALL?ET", r"^\s*Transaction\s+Type\b", r"Date\s*/\s*Time",
+                r"Transfer\s+to\s+Wallet", r"^\s*Payment\s+Method\b"]
+_MAYBANK_BRAND = [r"\bMAYBANK", r"\bMAE\b", r"\bM2U\b"]
+_MAYBANK_TRANSFER_LAYOUT = [r"^\s*Transferred\s*$", r"^\s*Receiver\b", r"^\s*Remark\b",
+                            r"Date\s*&\s*Time"]
+_CARD_LAYOUT = [r"\bVISA\b", r"\bMASTERCARD\b", r"\bAP\s+DATED\b", r"^\s*SALE\s+\S"]
+_DUITNOW     = r"DUIT\s*NOW"
+
 def detect_source(text):
-    t = text.upper()
-    if 'TNGD' in t or ('TNG' in t and 'DUITNOW QR' in t): return 'TNG'
-    if 'SHOPEE' in t and ('SHOPEEPAY' in t or 'SHOPEE MARKETPLACE' in t): return 'SHOPEE'
-    if 'MAYBANK' in t and 'VISA' in t: return 'MAYBANK_CARD'
-    if 'MAYBANK' in t and ('TRANSFER' in t or 'DUITNOW' in t): return 'MAYBANK_TRANSFER'
-    if 'DUITNOW' in t and 'MAYBANK' not in t: return 'DUITNOW_GENERIC'
-    if 'CIMB' in t: return 'CIMB'
-    if 'RHB'  in t: return 'RHB'
+    """Which app/bank a receipt came from, or 'UNKNOWN'.
+
+    Order matters: explicit brand words win, then app-specific layouts, then
+    the generic DuitNow label (shared by every bank)."""
+    if _hits(text, _TNG_BRAND): return 'TNG'
+    if re.search(r"SHOPEE", text, re.I) and re.search(r"SHOPEE\s*PAY|SHOPEE\s+MARKETPLACE", text, re.I):
+        return 'SHOPEE'
+    if _hits(text, _MAYBANK_BRAND):
+        return 'MAYBANK_CARD' if _hits(text, _CARD_LAYOUT[:3]) else 'MAYBANK_TRANSFER'
+    if re.search(r"\bCIMB", text, re.I): return 'CIMB'
+    if re.search(r"\bRHB\b", text, re.I): return 'RHB'
+    # No brand printed: fall back to each app's screen layout.
+    if _hits(text, _CARD_LAYOUT[2:]) == 2: return 'MAYBANK_CARD'   # "SALE x ... AP DATED"
+    if _hits(text, _MAYBANK_TRANSFER_LAYOUT) >= 3: return 'MAYBANK_TRANSFER'
+    if _hits(text, _TNG_LAYOUT) >= 3: return 'TNG'
+    if re.search(_DUITNOW, text, re.I): return 'DUITNOW_GENERIC'
     return 'UNKNOWN'
 
 def parse_maybank_card(text):

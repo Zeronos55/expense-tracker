@@ -186,3 +186,35 @@ def test_payment_details_inline():
 def test_payment_details_empty_is_not_next_label():
     text = "Transfer To\nYEOW LI YAN\nPayment Details\nPayment Method\neWallet Balance\nDate/Time\n05/11/2026"
     assert app.remark_value(text) is None
+
+
+# ── source detection ────────────────────────────────────────────────
+# App screenshots seldom print the bank's name, so detection also works from
+# each app's field labels.
+
+@pytest.mark.parametrize("text,expected", [
+    (TNG_COLUMNS, "TNG"),                      # was DUITNOW_GENERIC
+    (TNG_INLINE, "TNG"),                       # was DUITNOW_GENERIC
+    (TNG_TRANSFER_WALLET, "TNG"),              # was UNKNOWN
+    (TRANSFER_HUUTHAI, "MAYBANK_TRANSFER"),    # was UNKNOWN
+    (TRANSFER_WRAPPED, "MAYBANK_TRANSFER"),
+    (TRANSFER_NO_REMARK, "MAYBANK_TRANSFER"),
+    (MAYBANK_CARD, "MAYBANK_CARD"),
+    ("SALE GRAB RIDES\nAP DATED 07/10/26\nRM39.90", "MAYBANK_CARD"),   # no brand word
+    ("Maybank2u\nRM 5.00\n05/11/2026", "MAYBANK_TRANSFER"),            # brand only
+    ("Touch 'n Go eWallet\nRM3.00", "TNG"),
+    ("ShopeePay\nPay To\nKedai A\n-RM9.90", "SHOPEE"),
+    ("CIMB Clicks\nRM 10.00", "CIMB"),
+    ("RHB Bank\nRM 10.00", "RHB"),
+    (DUITNOW_TRANSFER, "DUITNOW_GENERIC"),     # DuitNow is shared by all banks
+    ("Photos\nEdit\nDone", "UNKNOWN"),
+    ("Merchant\nWallet", "UNKNOWN"),           # one stray label is not enough
+])
+def test_detect_source(text, expected):
+    assert app.detect_source(text) == expected
+
+def test_rhb_needs_whole_word():
+    assert app.detect_source("RM 4.00 CARHBOARD SHOP") == "UNKNOWN"
+
+def test_tng_brand_beats_maybank_funding_source():
+    assert app.detect_source("TNG eWallet\nReload via Maybank\nRM50.00") == "TNG"
