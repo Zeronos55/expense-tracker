@@ -186,3 +186,46 @@ def test_payment_details_inline():
 def test_payment_details_empty_is_not_next_label():
     text = "Transfer To\nYEOW LI YAN\nPayment Details\nPayment Method\neWallet Balance\nDate/Time\n05/11/2026"
     assert app.remark_value(text) is None
+
+
+# ── source detection ────────────────────────────────────────────────
+# App screenshots seldom print the bank's name, so detection also works from
+# each app's field labels.
+
+@pytest.mark.parametrize("text,expected", [
+    (TNG_COLUMNS, "TNG"),                      # was DUITNOW_GENERIC
+    (TNG_INLINE, "TNG"),                       # was DUITNOW_GENERIC
+    (TNG_TRANSFER_WALLET, "TNG"),              # was UNKNOWN
+    (TRANSFER_HUUTHAI, "TNG"),                 # was UNKNOWN
+    (TRANSFER_WRAPPED, "TNG"),
+    (TRANSFER_NO_REMARK, "TNG"),
+    (MAYBANK_CARD, "MAYBANK_CARD"),
+    ("SALE GRAB RIDES\nAP DATED 07/10/26\nRM39.90", "MAYBANK_CARD"),   # no brand word
+    ("Maybank2u\nRM 5.00\n05/11/2026", "MAYBANK_TRANSFER"),            # brand only
+    ("Touch 'n Go eWallet\nRM3.00", "TNG"),
+    ("ShopeePay\nPay To\nKedai A\n-RM9.90", "SHOPEE"),
+    ("CIMB Clicks\nRM 10.00", "CIMB"),
+    ("RHB Bank\nRM 10.00", "RHB"),
+    (DUITNOW_TRANSFER, "DUITNOW_GENERIC"),     # DuitNow is shared by all banks
+    ("Photos\nEdit\nDone", "UNKNOWN"),
+    ("Merchant\nWallet", "UNKNOWN"),           # one stray label is not enough
+])
+def test_detect_source(text, expected):
+    assert app.detect_source(text) == expected
+
+def test_rhb_needs_whole_word():
+    assert app.detect_source("RM 4.00 CARHBOARD SHOP") == "UNKNOWN"
+
+def test_tng_brand_beats_maybank_funding_source():
+    assert app.detect_source("TNG eWallet\nReload via Maybank\nRM50.00") == "TNG"
+
+def test_ad_text_does_not_set_source():
+    # real OCR: a "TNG eWallet Rebate" ad under a receipt from another app
+    text = "CIMB Clicks\nRM 10.00\nAd Buy Now & Enjoy Up to RM150 TNG eWallet Rebate.\nDone"
+    assert app.detect_source(text) == "CIMB"
+
+def test_real_transferred_screen_with_crlf_and_ad():
+    text = "\r\n".join(["23:35", "RM 31.10", "Transferred", "Receiver", "Remark", "Date & Time",
+                         "SIEW MING HUI", "Godzilla", "12/11/2026 23:35:22",
+                         "Ad Limited-Time Offer! Up to RM150 TNG eWallet Rebate.", "Done"])
+    assert app.detect_source(text) == "TNG"
