@@ -103,8 +103,9 @@ _TNG_BRAND   = [r"\bTNGD?\b", r"TOUCH\s*['’`]?\s*N\s*['’`]?\s*GO"]
 _TNG_LAYOUT  = [r"E\s?WALL?ET", r"^\s*Transaction\s+Type\b", r"Date\s*/\s*Time",
                 r"Transfer\s+to\s+Wallet", r"^\s*Payment\s+Method\b"]
 _MAYBANK_BRAND = [r"\bMAYBANK", r"\bMAE\b", r"\bM2U\b"]
-_MAYBANK_TRANSFER_LAYOUT = [r"^\s*Transferred\s*$", r"^\s*Receiver\b", r"^\s*Remark\b",
-                            r"Date\s*&\s*Time"]
+# The "Transferred / Receiver / Remark / Date & Time" success screen is TNG's.
+_TNG_TRANSFER_LAYOUT = [r"^\s*Transferred\s*$", r"^\s*Receiver\b", r"^\s*Remark\b",
+                        r"Date\s*&\s*Time"]
 _CARD_LAYOUT = [r"\bVISA\b", r"\bMASTERCARD\b", r"\bAP\s+DATED\b", r"^\s*SALE\s+\S"]
 _DUITNOW     = r"DUIT\s*NOW"
 
@@ -113,6 +114,8 @@ def detect_source(text):
 
     Order matters: explicit brand words win, then app-specific layouts, then
     the generic DuitNow label (shared by every bank)."""
+    # Ads under the receipt ("Ad ... TNG eWallet Rebate ...") are not the receipt.
+    text = re.split(r"^\s*Ad\s", text, maxsplit=1, flags=re.M)[0]
     if _hits(text, _TNG_BRAND): return 'TNG'
     if re.search(r"SHOPEE", text, re.I) and re.search(r"SHOPEE\s*PAY|SHOPEE\s+MARKETPLACE", text, re.I):
         return 'SHOPEE'
@@ -122,7 +125,7 @@ def detect_source(text):
     if re.search(r"\bRHB\b", text, re.I): return 'RHB'
     # No brand printed: fall back to each app's screen layout.
     if _hits(text, _CARD_LAYOUT[2:]) == 2: return 'MAYBANK_CARD'   # "SALE x ... AP DATED"
-    if _hits(text, _MAYBANK_TRANSFER_LAYOUT) >= 3: return 'MAYBANK_TRANSFER'
+    if _hits(text, _TNG_TRANSFER_LAYOUT) >= 3: return 'TNG'
     if _hits(text, _TNG_LAYOUT) >= 3: return 'TNG'
     if re.search(_DUITNOW, text, re.I): return 'DUITNOW_GENERIC'
     return 'UNKNOWN'

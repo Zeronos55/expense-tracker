@@ -196,9 +196,9 @@ def test_payment_details_empty_is_not_next_label():
     (TNG_COLUMNS, "TNG"),                      # was DUITNOW_GENERIC
     (TNG_INLINE, "TNG"),                       # was DUITNOW_GENERIC
     (TNG_TRANSFER_WALLET, "TNG"),              # was UNKNOWN
-    (TRANSFER_HUUTHAI, "MAYBANK_TRANSFER"),    # was UNKNOWN
-    (TRANSFER_WRAPPED, "MAYBANK_TRANSFER"),
-    (TRANSFER_NO_REMARK, "MAYBANK_TRANSFER"),
+    (TRANSFER_HUUTHAI, "TNG"),                 # was UNKNOWN
+    (TRANSFER_WRAPPED, "TNG"),
+    (TRANSFER_NO_REMARK, "TNG"),
     (MAYBANK_CARD, "MAYBANK_CARD"),
     ("SALE GRAB RIDES\nAP DATED 07/10/26\nRM39.90", "MAYBANK_CARD"),   # no brand word
     ("Maybank2u\nRM 5.00\n05/11/2026", "MAYBANK_TRANSFER"),            # brand only
@@ -218,3 +218,14 @@ def test_rhb_needs_whole_word():
 
 def test_tng_brand_beats_maybank_funding_source():
     assert app.detect_source("TNG eWallet\nReload via Maybank\nRM50.00") == "TNG"
+
+def test_ad_text_does_not_set_source():
+    # real OCR: a "TNG eWallet Rebate" ad under a receipt from another app
+    text = "CIMB Clicks\nRM 10.00\nAd Buy Now & Enjoy Up to RM150 TNG eWallet Rebate.\nDone"
+    assert app.detect_source(text) == "CIMB"
+
+def test_real_transferred_screen_with_crlf_and_ad():
+    text = "\r\n".join(["23:35", "RM 31.10", "Transferred", "Receiver", "Remark", "Date & Time",
+                         "SIEW MING HUI", "Godzilla", "12/11/2026 23:35:22",
+                         "Ad Limited-Time Offer! Up to RM150 TNG eWallet Rebate.", "Done"])
+    assert app.detect_source(text) == "TNG"
