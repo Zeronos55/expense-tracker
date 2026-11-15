@@ -229,3 +229,33 @@ def test_real_transferred_screen_with_crlf_and_ad():
                          "SIEW MING HUI", "Godzilla", "12/11/2026 23:35:22",
                          "Ad Limited-Time Offer! Up to RM150 TNG eWallet Rebate.", "Done"])
     assert app.detect_source(text) == "TNG"
+
+
+# ── real Maybank "Scan and Pay" receipt + TNG transfer with wrapped name ──
+MAYBANK_SCAN_PAY = "\r\n".join([
+    "00:08 1", "Share Receipt", "Maybank", "Scan and Pay", "Successful", "Reference ID",
+    "QR73798265", "15 Nov 2026, 12:07 AM", "Merchant Name", "MASA-QR", "Amount", "RM 14.00",
+    "Note: This receipt is computer generated and no", "signature is required.",
+    "Malayan Banking Berhad (Co. Reg. : 196001000142)"])
+
+def test_footer_note_is_not_a_remark():
+    assert app.remark_value(MAYBANK_SCAN_PAY) is None
+
+def test_maybank_scan_and_pay_parses(monkeypatch):
+    monkeypatch.setattr(app, "llm_parse_receipt", lambda *a, **k: None)
+    p = app.parse_receipt(MAYBANK_SCAN_PAY, {})
+    assert (p["source"], p["recipient"], p["amount"]) == ("MAYBANK_TRANSFER", "MASA-QR", 14.0)
+    assert p["remark"] is None
+
+def test_maybank_receipt_with_header_cropped():
+    cropped = "\n".join(MAYBANK_SCAN_PAY.split("\r\n")[3:])   # no brand word, no title
+    assert app.detect_source(cropped) == "MAYBANK_TRANSFER"
+
+def test_one_maybank_label_is_not_enough():
+    assert app.detect_source("Reference ID\nQR1") == "UNKNOWN"
+
+def test_mcflurry_remark_sets_food_category(monkeypatch):
+    monkeypatch.setattr(app, "llm_parse_receipt", lambda *a, **k: None)
+    text = "RM 3.85\nTransferred\nReceiver\nRemark\nDate & Time\nJOHAN WOON BIN\nMcFlurry\n15/11/2026 00:22:47"
+    p = app.parse_receipt(text, {})
+    assert p["remark"] == "McFlurry" and p["category"] == "Food & Dining"

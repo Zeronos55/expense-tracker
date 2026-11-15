@@ -61,7 +61,9 @@ KEYWORD_RULES = [
                        "KFC", "SUBWAY", "STARBUCKS", "TEALIVE", "CHATIME",
                        "RESTAURANT", "RESTORAN", "KEDAI MAKAN", "JUICE",
                        "CAFE", "BAKERY", "PIZZA", "BURGER", "COFFEE",
-                       "MATCHA", "BOBA", "LUNCH", "DINNER", "BREAKFAST"]),
+                       "MATCHA", "BOBA", "LUNCH", "DINNER", "BREAKFAST",
+                       "MCFLURRY", "NASI", "MEE", "KOPI", "LATTE", "SUSHI",
+                       "NOODLE", "SNACK", "DRINK", "SUPPER", "DESSERT"]),
     ("Transport", ["MYRAPID", "TOUCHNGO", "TOUCH N GO RELOAD", "PARKING",
                    "TOLL", "GRAB", "GRABCAR", "PETRONAS", "SHELL", "PETRON",
                    "BHP", "CALTEX", "LRT", "MRT", "KTM"]),
@@ -164,6 +166,7 @@ def field_value(text, labels):
 
 _DATE_LINE = re.compile(r"\d{1,2}[/-]\d{1,2}[/-]\d{2,4}")
 REMARK_LABELS = ["Remark", "Remarks", "Note", "Notes", "Payment Details"]
+_FOOTER_NOTE = re.compile(r"computer[\s-]*generated|signature\s+is\s+required", re.IGNORECASE)
 
 
 def remark_value(text):
@@ -174,7 +177,9 @@ def remark_value(text):
     name can wrap onto extra lines, so positions can't be trusted; instead the
     remark is the last value before the date line, and only counts when a
     receiver value precedes it (otherwise that lone value is the receiver)."""
-    lines = [l.strip() for l in (text or "").splitlines() if l.strip()]
+    # Bank footers ("Note: This receipt is computer generated ...") are not remarks.
+    text = "\n".join(l for l in (text or "").splitlines() if not _FOOTER_NOTE.search(l))
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
     for i, line in enumerate(lines):
         if _label_key(line) not in {_label_key(l) for l in REMARK_LABELS}:
             continue

@@ -108,6 +108,10 @@ _TNG_TRANSFER_LAYOUT = [r"^\s*Transferred\s*$", r"^\s*Receiver\b", r"^\s*Remark\
                         r"Date\s*&\s*Time"]
 _CARD_LAYOUT = [r"\bVISA\b", r"\bMASTERCARD\b", r"\bAP\s+DATED\b", r"^\s*SALE\s+\S"]
 _DUITNOW     = r"DUIT\s*NOW"
+# Maybank's own receipt screen ("Scan and Pay" / "Share Receipt" / footer legal line).
+_MAYBANK_LAYOUT = [r"SCAN\s+(?:AND|&)\s+PAY", r"^\s*Share\s+Receipt\b", r"MALAYAN\s+BANKING",
+                   r"^\s*Reference\s+ID\b", r"^\s*Merchant\s+Name\b",
+                   r"computer[\s-]*generated"]
 
 def detect_source(text):
     """Which app/bank a receipt came from, or 'UNKNOWN'.
@@ -127,6 +131,7 @@ def detect_source(text):
     if _hits(text, _CARD_LAYOUT[2:]) == 2: return 'MAYBANK_CARD'   # "SALE x ... AP DATED"
     if _hits(text, _TNG_TRANSFER_LAYOUT) >= 3: return 'TNG'
     if _hits(text, _TNG_LAYOUT) >= 3: return 'TNG'
+    if _hits(text, _MAYBANK_LAYOUT) >= 2: return 'MAYBANK_TRANSFER'  # header cropped off
     if re.search(_DUITNOW, text, re.I): return 'DUITNOW_GENERIC'
     return 'UNKNOWN'
 
