@@ -229,3 +229,32 @@ def test_real_transferred_screen_with_crlf_and_ad():
                          "SIEW MING HUI", "Godzilla", "12/11/2026 23:35:22",
                          "Ad Limited-Time Offer! Up to RM150 TNG eWallet Rebate.", "Done"])
     assert app.detect_source(text) == "TNG"
+
+
+def test_transfer_remark_beats_person_rule(monkeypatch):
+    monkeypatch.setattr(app, "llm_parse_receipt", lambda *a, **k: None)
+    rules = {"ISABELLE CHANG": {"merchant": None, "category": "Entertainment"}}
+    p = app.parse_receipt(TRANSFER_WRAPPED, rules)      # remark "Matcha"
+    assert p["category"] == "Food & Dining" and p["method"] == "remark"
+
+def test_transfer_without_useful_remark_uses_person_rule(monkeypatch):
+    monkeypatch.setattr(app, "llm_parse_receipt", lambda *a, **k: None)
+    rules = {"AHMAD BIN ALI": {"merchant": None, "category": "Entertainment"}}
+    text = TRANSFER_INLINE.replace("nasi lemak", "thanks")
+    p = app.parse_receipt(text, rules)
+    assert p["category"] == "Entertainment" and p["method"] == "learned"
+
+def test_learned_remark_rule_for_transfer(monkeypatch):
+    monkeypatch.setattr(app, "llm_parse_receipt", lambda *a, **k: None)
+    rules = {"ALDEN LIM WEN JIE": {"merchant": None, "category": "Utilities"},
+             "SNOOKER": {"merchant": None, "category": "Entertainment"}}
+    text = "RM 9.10\nTransferred\nReceiver\nRemark\nDate & Time\nALDEN LIM WEN JIE\nSnooker\n18/11/2026 16:07:59\nDone"
+    assert app.parse_receipt(text, rules)["category"] == "Entertainment"
+
+def test_shop_payment_keeps_shop_category_over_payment_details(monkeypatch):
+    monkeypatch.setattr(app, "llm_parse_receipt", lambda *a, **k: None)
+    rules = {"IMBI ROAD PORK NOODLES": {"merchant": None, "category": "Food & Dining"}}
+    text = ("-RM16.80\nTransaction Type\nDuitNow QR TNGD\nMerchant\nImbi Road Pork Noodles\n"
+            "Payment Details\nCard Reload\nPayment Method\neWallet Balance\nDate/Time\n13/11/2026 16:20:02")
+    p = app.parse_receipt(text, rules)
+    assert p["category"] == "Food & Dining" and p["method"] == "learned"

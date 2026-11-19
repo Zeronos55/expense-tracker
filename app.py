@@ -90,6 +90,9 @@ app.jinja_env.filters["rm"] = lambda v: f"{float(v or 0):,.2f}"
 
 # Field names a payee follows, most specific first. A label must start its
 # line (so "sent to email" or "LEAD" from body text is never a payee).
+# Fields that hold a person's name (a transfer), not a shop.
+TRANSFER_LABELS = ["Receiver", "Transfer To", "Recipient Name", "Beneficiary Name"]
+
 PAYEE_LABELS = ["Merchant", "Merchant Name", "Pay To", "Paid To", "Recipient",
                 "Recipient Name", "Receiver", "Beneficiary Name", "Beneficiary",
                 "Transfer To", "To"]
@@ -250,17 +253,20 @@ def parse_receipt(text, rules=None):
     """Regex parsers first; Gemini reads the whole text when they miss.
 
     Returns dict(date, recipient, amount, category, source, method, remark).
-    For transfers the Remark ("Matcha") says what it was for, so it can set the
-    category; it never becomes a learned merchant rule (it's about this
-    payment, not the person)."""
+    For transfers to a person the Remark ("Matcha") says what it was for, so it
+    is checked before the person's name (a rule for the person would otherwise
+    win for every payment to them); if the remark gives nothing, the person's
+    own rule applies. It never becomes a learned merchant rule (it's about this
+    payment, not the person). Shop payments keep the shop's category."""
     source = detect_source(text)
     remark = remark_value(text)
     date, recipient, amount = PARSER_REGISTRY[source](text)
     if is_label(recipient):
         recipient = None  # "Wallet", "Transaction Type", ... are labels, not payees
+    is_transfer = bool(recipient) and recipient == field_value(text, TRANSFER_LABELS)
     result = classify(recipient, rules, PRESET_CATEGORIES)
     category, method = result["category"], result["method"]
-    if category == UNCATEGORIZED and remark:
+    if remark and (category == UNCATEGORIZED or is_transfer):
         by_remark = classify(remark, rules, PRESET_CATEGORIES)
         if by_remark["category"] != UNCATEGORIZED:
             category, method = by_remark["category"], "remark"
